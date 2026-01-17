@@ -137,10 +137,8 @@ const Dashboard = () => {
 
       <main className="dashboard-content">
         {/* Left Panel: Personal Stats */}
-        <motion.div 
+        <div 
             className="stats-card"
-            initial={{ x: -50, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
         >
           <h2>Your Activity</h2>
           <div className="step-display">
@@ -163,14 +161,11 @@ const Dashboard = () => {
           <div style={{fontSize: '0.8rem', color: '#cbd5e1', marginTop: '10px', textAlign: 'center'}}>
              {process.env.REACT_APP_GOOGLE_CLIENT_ID ? 'API Active' : 'API Key Info Needed'}
           </div>
-        </motion.div>
+        </div>
 
         {/* Right Panel: Leaderboard */}
-        <motion.div 
+        <div 
             className="leaderboard-card"
-            initial={{ x: 50, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: 0.2 }}
         >
           <div className="leaderboard-header">
             <Trophy color="#facc15" size={24} />
@@ -178,23 +173,26 @@ const Dashboard = () => {
           </div>
           
           <div className="leaderboard-list">
-            {leaderboard.map((user, index) => (
-              <motion.div 
-                key={index} 
-                className={`leaderboard-item ${user.name === currentUser?.name ? 'current-user' : ''}`}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <div className="rank">{index + 1}</div>
-                <div className="user-info">
-                  <span className="user-name">{user.name}</span>
+            {leaderboard.length > 0 ? (
+              leaderboard.map((user, index) => (
+                <div 
+                  key={index} 
+                  className={`leaderboard-item ${user.name === currentUser?.name ? 'current-user' : ''}`}
+                >
+                  <div className="rank">{index + 1}</div>
+                  <div className="user-info">
+                    <span className="user-name">{user.name}</span>
+                  </div>
+                  <div className="user-steps">{user.steps.toLocaleString()}</div>
                 </div>
-                <div className="user-steps">{user.steps.toLocaleString()}</div>
-              </motion.div>
-            ))}
+              ))
+            ) : (
+                <div style={{padding: '20px', textAlign: 'center', color: '#64748b'}}>
+                    Loading leaderboard...
+                </div>
+            )}
           </div>
-        </motion.div>
+        </div>
       </main>
     </div>
   );

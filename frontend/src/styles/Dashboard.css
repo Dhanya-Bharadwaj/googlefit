@@ -2,7 +2,7 @@
 
 .dashboard-container {
     min-height: 100vh;
-    background-color: #f8fafc; /* Slate-50 */
+    background-color: #f8fafc; /* Slate-50 Background */
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     color: #1e293b; /* Slate-800 */
 }
