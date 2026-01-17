@@ -105,6 +105,11 @@ app.get('/leaderboard', (req, res) => {
   res.json(leaderboard);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// For Vercel Serverless (Export the App)
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+}
+
+module.exports = app;
