@@ -11,6 +11,11 @@ const DB_FILE = path.join(__dirname, 'users.json');
 app.use(cors());
 app.use(bodyParser.json());
 
+// Default Route
+app.get('/', (req, res) => {
+  res.send('Backend Server is Running.');
+});
+
 // Load users from file
 const loadUsers = () => {
   if (!fs.existsSync(DB_FILE)) {
