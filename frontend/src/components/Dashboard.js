@@ -144,7 +144,9 @@ const Dashboard = () => {
         >
           <h2>Your Activity</h2>
           <div className="step-display">
-            <span className="step-count">{steps.toLocaleString()}</span>
+            <div className="step-circle">
+                 <span className="step-count">{steps.toLocaleString()}</span>
+            </div>
             <span className="step-label">steps today</span>
           </div>
           
@@ -153,9 +155,13 @@ const Dashboard = () => {
             Sync with Google Fit
           </button>
           
+          <p className="sync-note">
+            Tap sync to update your steps from the cloud.
+          </p>
+          
           {/* Debug Info for User */}
-          <div style={{fontSize: '0.8rem', color: '#6b7280', marginTop: '10px', textAlign: 'center'}}>
-             {process.env.REACT_APP_GOOGLE_CLIENT_ID ? 'Connection Ready' : 'Restart Server to Load Keys'}
+          <div style={{fontSize: '0.8rem', color: '#cbd5e1', marginTop: '10px', textAlign: 'center'}}>
+             {process.env.REACT_APP_GOOGLE_CLIENT_ID ? 'API Active' : 'API Key Info Needed'}
           </div>
         </motion.div>
 
