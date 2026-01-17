@@ -52,7 +52,8 @@ app.post('/signup', (req, res) => {
     age,
     email,
     phone,
-    password
+    password,
+    steps: 0 // Initialize steps
   };
 
   users.push(newUser);
@@ -72,10 +73,36 @@ app.post('/signin', (req, res) => {
   );
 
   if (user) {
-    res.status(200).json({ message: 'Login successful!', user: { name: user.name, email: user.email } });
+    res.status(200).json({ message: 'Login successful!', user: { name: user.name, email: user.email, steps: user.steps || 0 } });
   } else {
     res.status(401).json({ message: 'Invalid credentials.' });
   }
+});
+
+// Update Steps Route
+app.post('/update-steps', (req, res) => {
+  const { email, steps } = req.body;
+  const users = loadUsers();
+  
+  const userIndex = users.findIndex(u => u.email === email);
+  if (userIndex !== -1) {
+    users[userIndex].steps = steps;
+    saveUsers(users);
+    res.json({ message: 'Steps updated.', totalSteps: steps });
+  } else {
+    res.status(404).json({ message: 'User not found.' });
+  }
+});
+
+// Leaderboard Route
+app.get('/leaderboard', (req, res) => {
+  const users = loadUsers();
+  // Return users sorted by steps (descending), masking sensitive data
+  const leaderboard = users
+    .map(u => ({ name: u.name, steps: u.steps || 0 }))
+    .sort((a, b) => b.steps - a.steps);
+  
+  res.json(leaderboard);
 });
 
 app.listen(PORT, () => {

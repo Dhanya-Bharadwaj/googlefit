@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import InteractiveCreatures from './InteractiveCreatures';
 import { Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import '../styles/AuthPage.css';
 
 const AuthPage = () => {
+  const navigate = useNavigate();
   const [isSignUp, setIsSignUp] = useState(false);
   const [focusedField, setFocusedField] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -32,7 +34,8 @@ const AuthPage = () => {
     e.preventDefault();
     setStatusMessage({ type: '', text: 'Processing...' });
 
-    const endpoint = isSignUp ? 'http://localhost:5000/signup' : 'http://localhost:5000/signin';
+    const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+    const endpoint = isSignUp ? `${API_URL}/signup` : `${API_URL}/signin`;
     const payload = isSignUp 
       ? { name: formData.name, age: formData.age, email: formData.email, phone: formData.phone, password: formData.password }
       : { loginIdentifier: formData.email, password: formData.password }; // We re-use 'email' field state for loginIdentifier input
@@ -50,13 +53,19 @@ const AuthPage = () => {
 
       if (response.ok) {
         setStatusMessage({ type: 'success', text: data.message });
-        if (!isSignUp) {
-          // Handle successful login (e.g., redirect or show dashboard)
-          alert(`Welcome back, ${data.user.name}!`);
-        } else {
-             // Optional: switch to sign in or clear form
-             setIsSignUp(false);
-        }
+        
+        // Store user info for session
+        const userToStore = isSignUp 
+            ? { name: formData.name, email: formData.email, steps: 0 } // Signup: Init steps 0
+            : data.user; // Signin: User comes from backend
+            
+        localStorage.setItem('user', JSON.stringify(userToStore));
+        
+        // Navigate to dashboard after short delay
+        setTimeout(() => {
+            navigate('/dashboard');
+        }, 1000);
+
       } else {
         setStatusMessage({ type: 'error', text: data.message });
       }

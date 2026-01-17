@@ -64,6 +64,35 @@ const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = 
    );
 };
 
+// --- Sub-Component: Creature Hands (For Privacy Mode) ---
+const CreatureHands = ({ cx, cy, color, isPasswordFocused, armOffset = 20 }) => {
+  // Simple hands that pop up from bottom to cover eyes
+  const handRadius = 8;
+  const coveredY = cy; // Cover eyes
+  const restingY = cy + 60; // Resting down
+
+  return (
+    <g>
+      <motion.circle 
+        cx={cx - armOffset} 
+        cy={restingY} 
+        r={handRadius} 
+        fill={color} 
+        animate={{ y: isPasswordFocused ? (coveredY - restingY) : 0 }}
+        transition={{ type: "spring", stiffness: 100, damping: 15 }}
+      />
+      <motion.circle 
+        cx={cx + armOffset} 
+        cy={restingY} 
+        r={handRadius} 
+        fill={color}
+        animate={{ y: isPasswordFocused ? (coveredY - restingY) : 0 }}
+        transition={{ type: "spring", stiffness: 100, damping: 15 }}
+      />
+    </g>
+  );
+};
+
 const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedField }) => {
   const containerRef = useRef(null);
 
@@ -121,6 +150,7 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
           <rect x="90" y="50" width="80" height="200" rx="2" fill="#7c3aed" />
           <BlinkingEye cx={115} cy={80} r={6} pupilR={2.5} {...eyeProps} />
           <BlinkingEye cx={145} cy={80} r={6} pupilR={2.5} {...eyeProps} />
+          <CreatureHands cx={130} cy={80} color="#7c3aed" isPasswordFocused={isPasswordFocused} armOffset={15} />
           <motion.path 
             // Name Active: Oval Shock Mouth ("O")
             // Happy Typing: Smile
@@ -145,6 +175,7 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
           <rect x="160" y="110" width="60" height="140" rx="2" fill="#1f2937" />
           <BlinkingEye cx={175} cy={135} r={6} pupilR={2.5} {...eyeProps} />
           <BlinkingEye cx={195} cy={135} r={6} pupilR={2.5} {...eyeProps} />
+          <CreatureHands cx={185} cy={135} color="#1f2937" isPasswordFocused={isPasswordFocused} armOffset={12} />
           <motion.path
              d={isNameActive 
                 ? "M 183 150 Q 185 152 187 150" // Small "oh"
@@ -166,6 +197,7 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
            <path d="M 50 250 A 60 60 0 0 1 170 250 L 50 250 Z" fill="#fb923c" />
            <BlinkingEye cx={80} cy={210} r={5} pupilR={2} {...eyeProps} /> 
            <BlinkingEye cx={120} cy={210} r={5} pupilR={2} {...eyeProps} />
+           <CreatureHands cx={100} cy={210} color="#fb923c" isPasswordFocused={isPasswordFocused} armOffset={20} />
            <motion.path 
             d={isNameActive 
               ? "M 95 230 Q 100 245 105 230" // Shock/Talk vertical oval
@@ -186,6 +218,7 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
           <path d="M 200 250 L 200 190 A 35 35 0 0 1 270 190 L 270 250 Z" fill="#facc15" />
           <BlinkingEye cx={225} cy={180} r={5} pupilR={2} {...eyeProps} />
           <BlinkingEye cx={255} cy={180} r={5} pupilR={2} {...eyeProps} />
+          <CreatureHands cx={240} cy={180} color="#facc15" isPasswordFocused={isPasswordFocused} armOffset={15} />
           <motion.path 
             d={isNameActive
                 ? "M 240 210 Q 245 220 250 210 Q 245 205 240 210" // Small shout

@@ -15,6 +15,7 @@ frontend/build
 # backend
 backend/users.json
 
+.env
 
 # misc
 .DS_Store
