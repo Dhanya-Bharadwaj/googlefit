@@ -17,6 +17,7 @@ const AuthPage = () => {
     password: '',
     loginIdentifier: '' 
   });
+  const [statusMessage, setStatusMessage] = useState({ type: '', text: '' });
 
   const handleMouseMove = (e) => {
     // Current mouse position
@@ -25,6 +26,44 @@ const AuthPage = () => {
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setStatusMessage({ type: '', text: 'Processing...' });
+
+    const endpoint = isSignUp ? 'http://localhost:5000/signup' : 'http://localhost:5000/signin';
+    const payload = isSignUp 
+      ? { name: formData.name, age: formData.age, email: formData.email, phone: formData.phone, password: formData.password }
+      : { loginIdentifier: formData.email, password: formData.password }; // We re-use 'email' field state for loginIdentifier input
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setStatusMessage({ type: 'success', text: data.message });
+        if (!isSignUp) {
+          // Handle successful login (e.g., redirect or show dashboard)
+          alert(`Welcome back, ${data.user.name}!`);
+        } else {
+             // Optional: switch to sign in or clear form
+             setIsSignUp(false);
+        }
+      } else {
+        setStatusMessage({ type: 'error', text: data.message });
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      setStatusMessage({ type: 'error', text: 'Failed to connect to server. Ensure backend is running.' });
+    }
   };
 
   const isPasswordFocused = focusedField === 'password' || showPassword;
@@ -109,9 +148,21 @@ const AuthPage = () => {
           <p className="auth-subtitle">
             {isSignUp ? 'Please enter your details to sign up.' : 'Please enter your details.'}
           </p>
+          {statusMessage.text && (
+            <div style={{ 
+              marginTop: '1rem', 
+              padding: '0.75rem', 
+              borderRadius: '0.5rem', 
+              backgroundColor: statusMessage.type === 'success' ? '#d1fae5' : '#fee2e2',
+              color: statusMessage.type === 'success' ? '#065f46' : '#991b1b',
+              fontSize: '0.875rem'
+            }}>
+              {statusMessage.text}
+            </div>
+          )}
         </div>
 
-        <form onSubmit={(e) => e.preventDefault()}>
+        <form onSubmit={handleSubmit}>
           <AnimatePresence mode="wait">
             <motion.div
               key={isSignUp ? 'signup' : 'signin'}
