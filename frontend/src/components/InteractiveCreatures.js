@@ -31,7 +31,7 @@ const useEyeTracker = (eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy
       x: Math.cos(angle) * distance,
       y: Math.sin(angle) * distance
     });
-  }, [mousePos, isPasswordFocused, containerRef, cx, cy, radius]);
+  }, [mousePos, isPasswordFocused, containerRef, cx, cy, radius, eyeRef]);
 
   return position;
 };

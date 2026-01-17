@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, Trophy, Users, RefreshCw, LogOut } from 'lucide-react';
+import { Activity, Trophy, RefreshCw, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
@@ -11,6 +11,18 @@ const Dashboard = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [steps, setSteps] = useState(0);
   const navigate = useNavigate();
+
+  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
+  const fetchLeaderboard = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/leaderboard`);
+      const data = await response.json();
+      setLeaderboard(data);
+    } catch (error) {
+      console.error('Error fetching leaderboard:', error);
+    }
+  }, [API_URL]);
 
   useEffect(() => {
     // Load user from local storage (set during login)
@@ -24,19 +36,7 @@ const Dashboard = () => {
     setSteps(parsedUser.steps || 0);
 
     fetchLeaderboard();
-  }, [navigate]);
-
-  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-
-  const fetchLeaderboard = async () => {
-    try {
-      const response = await fetch(`${API_URL}/leaderboard`);
-      const data = await response.json();
-      setLeaderboard(data);
-    } catch (error) {
-      console.error('Error fetching leaderboard:', error);
-    }
-  };
+  }, [navigate, fetchLeaderboard]);
 
   const updateBackendSteps = async (newSteps) => {
     if (currentUser) {

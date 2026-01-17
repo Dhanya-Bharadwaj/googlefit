@@ -203,7 +203,7 @@ const AuthPage = () => {
                       <input type="checkbox" id="remember" />
                       <label htmlFor="remember" style={{ color: '#6b7280' }}>Remember for 30 days</label>
                     </div>
-                    <a href="#" style={{ color: '#6200ea', textDecoration: 'none' }}>Forgot password?</a>
+                    <button type="button" style={{ background: 'none', border: 'none', color: '#6200ea', cursor: 'pointer', padding: 0, font: 'inherit' }}>Forgot password?</button>
                   </div>
                 </>
               )}
