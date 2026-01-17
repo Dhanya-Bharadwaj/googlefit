@@ -38,13 +38,34 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
     return position;
   };
 
+  // Blinking Logic
+  const [isBlinking, setIsBlinking] = useState(false);
+
+  useEffect(() => {
+    const blinkLoop = () => {
+      setIsBlinking(true);
+      setTimeout(() => setIsBlinking(false), 150); // Blink duration
+      
+      // Random interval between 2s and 6s
+      const nextBlink = Math.random() * 4000 + 2000;
+      setTimeout(blinkLoop, nextBlink);
+    };
+    
+    // Start loop
+    const timeoutId = setTimeout(blinkLoop, 3000);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
   const Eye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = "black" }) => {
     const eyeRef = useRef(null);
     const pos = useEyeTracker(eyeRef, cx, cy, r - pupilR);
 
     return (
       <g>
+        {/* Eye Ball */}
         <circle ref={eyeRef} cx={cx} cy={cy} r={r} fill={color} />
+        
+        {/* Pupil */}
         <motion.circle 
           cx={cx} 
           cy={cy} 
@@ -53,14 +74,74 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
           animate={ { x: pos.x, y: pos.y } }
           transition={{ type: "spring", stiffness: 150, damping: 15 }}
         />
+
+        {/* Eyelid (Blink) */}
+        <motion.ellipse
+            cx={cx}
+            cy={cy}
+            rx={r}
+            ry={isBlinking ? r : 0} // Close eye when blinking
+            fill={color} // Match skin color? No, usually eyelids match skin or just cover pupil.
+            // Actually, for these flat characters, eyelids often match the body color. 
+            // We'll use a "closed eye" line or just cover with body color.
+            // Since we don't know body color easy here (prop drilling), let's use a standard "Shut" look or black line.
+            // Let's make it simple: cover with skin-colored eyelid if passed, or just scale Y to 0?
+            // Easier: Overlay a shape that scales up/down.
+        />
+        {/* Improved Blink: Just squashing the eye? No, SVG circle squashing is hard without scale transform on center.
+            Let's draw a line when blinking to simulate closed eye, and hide pupil.
+        */}
+         <motion.path
+            d={`M ${cx - r} ${cy} Q ${cx} ${cy + (isBlinking ? 2 : -r*1.5)} ${cx + r} ${cy}`} // Eyelid moving down
+            fill={color === "white" ? "#fff" : color} // If white eye, blink is white? No, eyelid is skin.
+            // Let's try simple opacity toggle for now or squashed scale.
+         />
       </g>
     );
   };
   
-  // Animation - Disabled vertical shaking/dancing
-  const getBounce = (delay) => ({
-    y: 0
-  });
+  // Re-define Eye to handle blinking better
+  // We will scale the "Eye Group" on Y axis to 0.1 when blinking to simulate closing.
+  const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = "black" }) => {
+     const eyeRef = useRef(null);
+     const pos = useEyeTracker(eyeRef, cx, cy, r - pupilR);
+
+     return (
+       <g>
+         <motion.g
+            initial={false}
+            animate={{ scaleY: isBlinking ? 0.1 : 1 }}
+            transition={{ duration: 0.1 }}
+            style={{ originX: `${cx}px`, originY: `${cy}px` }} // Pivot at center of eye
+         >
+            <circle ref={eyeRef} cx={cx} cy={cy} r={r} fill={color} />
+            <motion.circle 
+              cx={cx} 
+              cy={cy} 
+              r={pupilR} 
+              fill={pupilColor}
+              animate={ { x: pos.x, y: pos.y } }
+              transition={{ type: "spring", stiffness: 150, damping: 15 }}
+            />
+         </motion.g>
+       </g>
+     );
+  };
+  
+  // Animation - specific for "Name" typing shock/bend
+  const isNameActive = focusedField === 'name' && isTyping;
+
+  const purpleBounce = {
+    rotate: isNameActive ? -5 : 0, 
+    y: isNameActive ? 5 : 0,
+    transition: { type: "spring", stiffness: 60, damping: 12 }
+  };
+
+  const otherCreaturesLook = {
+    // Slight lean towards purple guy
+    x: isNameActive ? -3 : 0,
+    transition: { duration: 0.5 }
+  };
 
   // Mouth Animation Variants
   const mouthTransition = { duration: 0.3 };
@@ -73,14 +154,25 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
         <ellipse cx="200" cy="280" rx="180" ry="15" fill="#00000010" />
 
         {/* Purple Tall Guy - Back Left */}
-        <motion.g animate={getBounce(0)}>
+        <motion.g 
+          animate={purpleBounce} 
+          style={{ originX: '130px', originY: '250px' }} // Pivot near bottom center
+        >
           <rect x="90" y="50" width="80" height="200" rx="2" fill="#7c3aed" />
-          <Eye cx="115" cy="80" r={6} pupilR={2.5} />
-          <Eye cx="145" cy="80" r={6} pupilR={2.5} />
+          <BlinkingEye cx="115" cy="80" r={6} pupilR={2.5} />
+          <BlinkingEye cx="145" cy="80" r={6} pupilR={2.5} />
           <motion.path 
-            // Happy: Open smile D shape-ish or deeper curve
-            d={isTyping ? "M 125 110 Q 130 120 135 110" : "M 125 110 Q 130 112 135 110"}
-            fill="none" 
+            // Name Active: Oval Shock Mouth ("O")
+            // Happy Typing: Smile
+            // Default: Flat
+            d={
+              isNameActive 
+                ? "M 125 105 Q 120 115 125 125 Q 135 125 135 115 Q 135 105 125 105" // Oval-ish
+                : isTyping 
+                  ? "M 125 110 Q 130 120 135 110" 
+                  : "M 125 110 Q 130 112 135 110"
+            }
+            fill={isNameActive ? "black" : "none"}
             stroke="black" 
             strokeWidth="2" 
             strokeLinecap="round"
@@ -89,31 +181,39 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
         </motion.g>
 
         {/* Black Medium Guy - Back Right (tucked closer) */}
-        <motion.g animate={getBounce(0.1)}>
+        <motion.g animate={otherCreaturesLook}>
           <rect x="160" y="110" width="60" height="140" rx="2" fill="#1f2937" />
-          <Eye cx="175" cy="135" r={6} pupilR={2.5} />
-          <Eye cx="195" cy="135" r={6} pupilR={2.5} />
+          <BlinkingEye cx="175" cy="135" r={6} pupilR={2.5} />
+          <BlinkingEye cx="195" cy="135" r={6} pupilR={2.5} />
           <motion.path
-             // Simple small smile when happy
-             d={isTyping ? "M 182 150 Q 185 155 188 150" : "M 182 150 Q 185 150 188 150"}
+             d={isNameActive 
+                ? "M 183 150 Q 185 152 187 150" // Small "oh"
+                : isTyping 
+                    ? "M 182 150 Q 185 155 188 150" 
+                    : "M 182 150 Q 185 150 188 150"
+             }
              stroke="white"
              fill="none"
              strokeWidth="1.5"
              strokeLinecap="round"
-             opacity={isTyping ? 1 : 0} // Only show mouth when active/happy? Or kept subtle
+             opacity={isTyping ? 1 : 0} 
              transition={mouthTransition}
           />
         </motion.g>
 
         {/* Orange Blob - Front Left */}
-        <motion.g animate={getBounce(0.2)}>
+        <motion.g animate={otherCreaturesLook}>
            <path d="M 50 250 A 60 60 0 0 1 170 250 L 50 250 Z" fill="#fb923c" />
-           <Eye cx="80" cy="210" r={5} pupilR={2} /> 
-           <Eye cx="120" cy="210" r={5} pupilR={2} />
+           <BlinkingEye cx="80" cy="210" r={5} pupilR={2} /> 
+           <BlinkingEye cx="120" cy="210" r={5} pupilR={2} />
            <motion.path 
-             // Happy: Big open smile
-            d={isTyping ? "M 90 225 Q 100 240 110 225" : "M 90 225 Q 100 230 110 225"} 
-            fill="none" 
+            d={isNameActive 
+              ? "M 95 230 Q 100 245 105 230" // Shock/Talk vertical oval
+              : isTyping 
+                ? "M 90 225 Q 100 240 110 225" 
+                : "M 90 225 Q 100 230 110 225"
+            } 
+            fill={isNameActive ? "black" : "none"}
             stroke="black" 
             strokeWidth="2" 
             strokeLinecap="round" 
@@ -122,14 +222,18 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
         </motion.g>
 
         {/* Yellow Finger Guy - Front Right */}
-        <motion.g animate={getBounce(0.05)}>
+        <motion.g animate={otherCreaturesLook}>
           <path d="M 200 250 L 200 190 A 35 35 0 0 1 270 190 L 270 250 Z" fill="#facc15" />
-          <Eye cx="225" cy="180" r={5} pupilR={2} />
-          <Eye cx="255" cy="180" r={5} pupilR={2} />
+          <BlinkingEye cx="225" cy="180" r={5} pupilR={2} />
+          <BlinkingEye cx="255" cy="180" r={5} pupilR={2} />
           <motion.path 
-             // Happy: Curve vs Line
-            d={isTyping ? "M 235 210 Q 245 220 255 210" : "M 235 210 Q 245 210 255 210"} 
-            fill="none" 
+            d={isNameActive
+                ? "M 240 210 Q 245 220 250 210 Q 245 205 240 210" // Small shout
+                : isTyping 
+                    ? "M 235 210 Q 245 220 255 210" 
+                    : "M 235 210 Q 245 210 255 210"
+            } 
+            fill={isNameActive ? "black" : "none" }
             stroke="black" 
             strokeWidth="2" 
             strokeLinecap="round" 

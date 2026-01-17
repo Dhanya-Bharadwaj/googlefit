@@ -39,7 +39,7 @@ const AuthPage = () => {
         <input
           name={name}
           className="auth-input"
-          type={name === 'password' && !showPassword ? 'password' : type}
+          type={name === 'password' ? (showPassword ? 'text' : 'password') : type}
           placeholder={placeholder}
           value={formData[name]}
           onChange={handleChange}
