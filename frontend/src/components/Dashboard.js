@@ -12,7 +12,7 @@ const Dashboard = () => {
   const [steps, setSteps] = useState(0);
   const navigate = useNavigate();
 
-  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+  const API_URL = '/api';
 
   const fetchLeaderboard = useCallback(async () => {
     try {

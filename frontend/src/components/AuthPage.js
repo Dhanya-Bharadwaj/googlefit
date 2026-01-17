@@ -34,7 +34,7 @@ const AuthPage = () => {
     e.preventDefault();
     setStatusMessage({ type: '', text: 'Processing...' });
 
-    const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+    const API_URL = '/api';
     const endpoint = isSignUp ? `${API_URL}/signup` : `${API_URL}/signin`;
     const payload = isSignUp 
       ? { name: formData.name, age: formData.age, email: formData.email, phone: formData.phone, password: formData.password }
