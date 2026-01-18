@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useGoogleLogin } from '@react-oauth/google';
+import axios from 'axios';
 import InteractiveCreatures from './InteractiveCreatures';
 import { Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -76,6 +78,44 @@ const AuthPage = () => {
   };
 
   const isPasswordFocused = focusedField === 'password' || showPassword;
+
+  const handleGoogleLogin = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+        try {
+            setStatusMessage({ type: '', text: 'Verifying Google Account...' });
+            
+            // Fetch User Info
+            const userInfo = await axios.get(
+                'https://www.googleapis.com/oauth2/v3/userinfo',
+                { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } }
+            );
+
+            const googleUser = userInfo.data;
+
+            // In a real app, send this to backend to verify/create account
+            // For now, we simulate login with this data
+            const userToStore = {
+                name: googleUser.name,
+                email: googleUser.email,
+                steps: 0,
+                picture: googleUser.picture 
+            };
+
+            setStatusMessage({ type: 'success', text: `Welcome, ${googleUser.given_name}!` });
+            
+            localStorage.setItem('user', JSON.stringify(userToStore));
+            
+            setTimeout(() => {
+                navigate('/dashboard', { state: { showIntro: true } });
+            }, 1000);
+
+        } catch (error) {
+            console.error(error);
+            setStatusMessage({ type: 'error', text: 'Google Login Failed' });
+        }
+    },
+    onError: () => setStatusMessage({ type: 'error', text: 'Google Login Failed' }),
+  });
 
   // Render Input Helper
   const renderInput = (name, placeholder, type = "text", label) => (
@@ -219,6 +259,7 @@ const AuthPage = () => {
                <button 
                 type="button"
                 className="google-btn"
+                onClick={() => handleGoogleLogin()}
               >
                 <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" style={{ width: '20px', height: '20px' }} />
                 Log in with Google
