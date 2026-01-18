@@ -184,9 +184,14 @@ const AuthPage = () => {
           focusedField={focusedField}
         />
         
-        <h1 className="visuals-logo" style={{ margin: 0 }}>
-          Fitness Tracker
-        </h1>
+        <div style={{ position: 'absolute', bottom: '3rem', left: '3rem', zIndex: 10 }}>
+            <h1 style={{ margin: 0, fontSize: '3rem', fontWeight: 'bold', color: '#e5e7eb', fontFamily: 'Inter, sans-serif' }}>
+            Fitness Tracker
+            </h1>
+            <p style={{ color: '#e5e7eb', marginTop: '1rem', maxWidth: '350px', fontSize: '1.1rem', lineHeight: '1.5', opacity: 0.9 }}>
+            Join the challenge. Sync your steps from Google Fit, compete with friends, and climb the leaderboard.
+            </p>
+        </div>
       </div>
 
       {/* Right Side - Form */}
