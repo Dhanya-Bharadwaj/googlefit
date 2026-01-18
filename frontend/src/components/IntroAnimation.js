@@ -68,32 +68,46 @@ const IntroAnimation = ({ onComplete }) => {
 
             {/* Final Text Display */}
             <div className="final-text-container">
-                {fullText.map((char, i) => {
-                    // Check if this char belongs to 'ELOCITY'
-                    // 'FITNESS TRACKER AT ELOCITY'
-                    // Index of E is 19
-                    const isGreen = i >= 19; 
+                {(() => {
+                    let globalIndex = 0;
+                    return text.split(' ').map((word, wIndex) => {
+                        const wordComponent = (
+                            <div key={wIndex} className="word-wrapper">
+                                {word.split('').map((char) => {
+                                    const i = globalIndex;
+                                    globalIndex++;
+                                    // Check if this char belongs to 'ELOCITY'
+                                    // 'FITNESS TRACKER AT ELOCITY'
+                                    // Index of E is 19
+                                    const isGreen = i >= 19; 
 
-                    return (
-                        <motion.span 
-                            key={i}
-                            className={`final-char ${isGreen ? 'green-text' : ''}`}
-                            initial={{ opacity: 0, y: 50, scale: 0.5 }}
-                            animate={step >= 4 ? { 
-                                opacity: 1, 
-                                y: 0, 
-                                scale: [1, 1.2, 1],
-                                textShadow: isGreen ? "0px 0px 8px rgba(34, 197, 94, 0.8)" : "none"
-                            } : {}}
-                            transition={{ 
-                                delay: step === 4 ? i * 0.1 : 0, 
-                                type: 'spring' 
-                            }}
-                        >
-                            {char === ' ' ? '\u00A0' : char}
-                        </motion.span>
-                    );
-                })}
+                                    return (
+                                        <motion.span 
+                                            key={i}
+                                            className={`final-char ${isGreen ? 'green-text' : ''}`}
+                                            initial={{ opacity: 0, y: 50, scale: 0.5 }}
+                                            animate={step >= 4 ? { 
+                                                opacity: 1, 
+                                                y: 0, 
+                                                scale: [1, 1.2, 1],
+                                                textShadow: isGreen ? "0px 0px 8px rgba(34, 197, 94, 0.8)" : "none"
+                                            } : {}}
+                                            transition={{ 
+                                                delay: step === 4 ? i * 0.1 : 0, 
+                                                type: 'spring' 
+                                            }}
+                                        >
+                                            {char}
+                                        </motion.span>
+                                    );
+                                })}
+                            </div>
+                        );
+                        // Increment for the space
+                        globalIndex++;
+                        return wordComponent;
+                    });
+                })()}
             </div>
 
             {/* Falling Letters */}

@@ -17,10 +17,18 @@
     width: 100%;
     display: flex;
     justify-content: center;
+    align-content: center;
     flex-wrap: wrap;
-    gap: 2px;
+    gap: 0.8rem; /* Gap between WORDS */
+    padding: 0 1rem;
     z-index: 50;
     pointer-events: none;
+}
+
+.word-wrapper {
+    display: flex;
+    flex-wrap: nowrap;
+    white-space: nowrap;
 }
 
 .final-char {
@@ -29,6 +37,29 @@
     font-size: 3rem; /* Bigger font */
     font-weight: 900;
     color: #1f2937;
+    margin: 0 1px; /* Slight kerning */
+}
+
+/* Response Design */
+@media (max-width: 768px) {
+    .final-char, .falling-letter {
+        font-size: 1.8rem; /* Smaller font on tablets/phones */
+    }
+    
+    .final-text-container {
+        gap: 0.5rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .final-char, .falling-letter {
+        font-size: 1.4rem; /* Even smaller for small phones */
+    }
+    
+    .final-text-container {
+        top: 35%; /* Move up slightly */
+        gap: 0.4rem;
+    }
 }
 
 .final-char.green-text {
