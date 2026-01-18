@@ -123,6 +123,7 @@ const AuthPage = () => {
         <InteractiveCreatures 
           mousePos={mousePos} 
           isPasswordFocused={isPasswordFocused} 
+          showPassword={showPassword}
           isTyping={focusedField && formData[focusedField]?.length > 0} 
           focusedField={focusedField}
         />

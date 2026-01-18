@@ -3,25 +3,33 @@ import { motion } from 'framer-motion';
 import '../styles/InteractiveCreatures.css';
 
 // --- Helper Hook: Eye Tracker ---
-const useEyeTracker = (eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy, radius = 5) => {
+const useEyeTracker = (eyeRef, mousePos, isPasswordFocused, showPassword, containerRef, cx, cy, radius = 5) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     // We check containerRef mainly to ensure the component is mounted/visible context
     if (!containerRef.current || !eyeRef.current) return;
 
-    const rect = eyeRef.current.getBoundingClientRect();
-    const eyeCenterX = rect.left + rect.width / 2;
-    const eyeCenterY = rect.top + rect.height / 2;
-
     let targetX = mousePos.x;
     let targetY = mousePos.y;
 
-    // Logic: If password focused, look away (opposite side/up) but don't close eyes
+    // Logic: If password focused
+    // We override calculations and set position directly based on radius direction
     if (isPasswordFocused) {
-      targetX = eyeCenterX; // Center horizontally
-      targetY = eyeCenterY - 200; // Look up
+        if (showPassword) {
+            // Visible: Look Left (Away)
+            setPosition({ x: -radius, y: 0 });
+        } else {
+            // Hidden: Look Right (At Password)
+            // Adding a slight y offset (2px) to make it look less robotic
+            setPosition({ x: radius, y: 2 }); 
+        }
+        return; // Skip standard calculation
     }
+
+    const rect = eyeRef.current.getBoundingClientRect();
+    const eyeCenterX = rect.left + rect.width / 2;
+    const eyeCenterY = rect.top + rect.height / 2;
 
     const angle = Math.atan2(targetY - eyeCenterY, targetX - eyeCenterX);
     // Limit movement within radius
@@ -31,16 +39,16 @@ const useEyeTracker = (eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy
       x: Math.cos(angle) * distance,
       y: Math.sin(angle) * distance
     });
-  }, [mousePos, isPasswordFocused, containerRef, cx, cy, radius, eyeRef]);
+  }, [mousePos, isPasswordFocused, showPassword, containerRef, cx, cy, radius, eyeRef]);
 
   return position;
 };
 
 // --- Sub-Component: Blinking Eye ---
-const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = "black", mousePos, isPasswordFocused, containerRef }) => {
+const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = "black", mousePos, isPasswordFocused, showPassword, containerRef }) => {
    const eyeRef = useRef(null);
    // Pass all necessary state into the hook
-   const pos = useEyeTracker(eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy, r - pupilR);
+   const pos = useEyeTracker(eyeRef, mousePos, isPasswordFocused, showPassword, containerRef, cx, cy, r - pupilR);
 
    return (
      <g>
@@ -92,21 +100,28 @@ const CreatureHands = ({ cx, cy, color, armOffset = 20 }) => {
   );
 };
 
-const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedField }) => {
+const InteractiveCreatures = ({ mousePos, isPasswordFocused, showPassword, isTyping, focusedField }) => {
   const containerRef = useRef(null);
 
   // Animation - specific for "Name" typing shock/bend
   const isNameActive = focusedField === 'name' && isTyping;
+  
+  // Logic for bending/peeking
+  // If hidden password focused: Bend Right (towards form)
+  // If visible password: Stand Straight (handled by default 0)
+  const isPeeking = isPasswordFocused && !showPassword;
 
   const purpleBounce = {
-    rotate: isNameActive ? -5 : 0, 
-    y: isNameActive ? 5 : 0,
+    rotate: isNameActive ? -5 : (isPeeking ? 15 : 0), 
+    y: isNameActive ? 5 : (isPeeking ? 10 : 0),
+    x: isPeeking ? 20 : 0, 
     transition: { type: "spring", stiffness: 60, damping: 12 }
   };
 
   const otherCreaturesLook = {
-    // Slight lean towards purple guy
-    x: isNameActive ? -3 : 0,
+    // Slight lean towards purple guy OR lean towards form if peeking
+    x: isNameActive ? -3 : (isPeeking ? 10 : 0),
+    rotate: isPeeking ? 5 : 0,
     transition: { duration: 0.5 }
   };
 
@@ -114,7 +129,7 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
   const mouthTransition = { duration: 0.3 };
 
   // Common props for eyes to clean up JSX
-  const eyeProps = { mousePos, isPasswordFocused, containerRef };
+  const eyeProps = { mousePos, isPasswordFocused, showPassword, containerRef };
 
   return (
     <div ref={containerRef} className="creatures-container">
