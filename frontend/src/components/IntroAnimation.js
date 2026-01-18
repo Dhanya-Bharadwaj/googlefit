@@ -116,6 +116,42 @@ const IntroAnimation = ({ onComplete }) => {
                 dropDuration={dropDuration} 
                 totalCatchTime={totalCatchTime}
             />
+
+            {/* Skip Button */}
+            <motion.button
+                onClick={onComplete}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.9)" }}
+                whileTap={{ scale: 0.95 }}
+                style={{
+                    position: 'absolute',
+                    bottom: '40px',
+                    right: '40px',
+                    border: 'none',
+                    background: 'rgba(255, 255, 255, 0.6)',
+                    backdropFilter: 'blur(8px)',
+                    padding: '10px 20px',
+                    borderRadius: '30px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontFamily: "'Philosopher', sans-serif",
+                    fontWeight: '700',
+                    color: '#374151',
+                    boxShadow: '0 4px 15px rgba(0, 0, 0, 0.05)',
+                    zIndex: 1000,
+                    textTransform: 'uppercase',
+                    fontSize: '0.8rem',
+                    letterSpacing: '1px'
+                }}
+            >
+                Skip 
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M5 3l14 9-14 9V3z" />
+                </svg>
+            </motion.button>
         </div>
     )
 }
