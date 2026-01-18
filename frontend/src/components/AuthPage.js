@@ -293,6 +293,13 @@ const AuthPage = () => {
              {isSignUp ? 'Log In' : 'Sign Up'}
           </button>
         </div>
+
+        {/* Legal Links Footer */}
+        <div style={{ marginTop: '2rem', textAlign: 'center', fontSize: '0.75rem', color: '#9ca3af', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+            <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</a>
+            <span style={{color: '#d1d5db'}}>|</span>
+            <a href="/terms-of-service" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>Terms of Service</a>
+        </div>
       </div>
     </div>
   );
