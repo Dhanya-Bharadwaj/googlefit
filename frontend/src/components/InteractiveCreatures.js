@@ -10,18 +10,18 @@ const useEyeTracker = (eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy
     // We check containerRef mainly to ensure the component is mounted/visible context
     if (!containerRef.current || !eyeRef.current) return;
 
-    let targetX = mousePos.x;
-    let targetY = mousePos.y;
-
-    // Logic: If password focused, look away (up and away to shadow realm)
-    if (isPasswordFocused) {
-      targetX = -2000;
-      targetY = -2000;
-    }
-
     const rect = eyeRef.current.getBoundingClientRect();
     const eyeCenterX = rect.left + rect.width / 2;
     const eyeCenterY = rect.top + rect.height / 2;
+
+    let targetX = mousePos.x;
+    let targetY = mousePos.y;
+
+    // Logic: If password focused, look away (opposite side/up) but don't close eyes
+    if (isPasswordFocused) {
+      targetX = eyeCenterX; // Center horizontally
+      targetY = eyeCenterY - 200; // Look up
+    }
 
     const angle = Math.atan2(targetY - eyeCenterY, targetX - eyeCenterX);
     // Limit movement within radius
@@ -37,7 +37,7 @@ const useEyeTracker = (eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy
 };
 
 // --- Sub-Component: Blinking Eye ---
-const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = "black", isBlinking, mousePos, isPasswordFocused, containerRef }) => {
+const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = "black", mousePos, isPasswordFocused, containerRef }) => {
    const eyeRef = useRef(null);
    // Pass all necessary state into the hook
    const pos = useEyeTracker(eyeRef, mousePos, isPasswordFocused, containerRef, cx, cy, r - pupilR);
@@ -46,7 +46,7 @@ const BlinkingEye = ({ cx, cy, r = 8, pupilR = 3, color = "white", pupilColor = 
      <g>
        <motion.g
           initial={false}
-          animate={{ scaleY: isBlinking ? 0.1 : 1 }}
+          animate={{ scaleY: 1 }}
           transition={{ duration: 0.1 }}
           style={{ originX: `${cx}px`, originY: `${cy}px` }} // Pivot at center of eye
        >
@@ -78,7 +78,7 @@ const CreatureHands = ({ cx, cy, color, isPasswordFocused, armOffset = 20 }) => 
         cy={restingY} 
         r={handRadius} 
         fill={color} 
-        animate={{ y: isPasswordFocused ? (coveredY - restingY) : 0 }}
+        animate={{ y: 0 }}
         transition={{ type: "spring", stiffness: 100, damping: 15 }}
       />
       <motion.circle 
@@ -86,7 +86,7 @@ const CreatureHands = ({ cx, cy, color, isPasswordFocused, armOffset = 20 }) => 
         cy={restingY} 
         r={handRadius} 
         fill={color}
-        animate={{ y: isPasswordFocused ? (coveredY - restingY) : 0 }}
+        animate={{ y: 0 }}
         transition={{ type: "spring", stiffness: 100, damping: 15 }}
       />
     </g>
@@ -96,24 +96,6 @@ const CreatureHands = ({ cx, cy, color, isPasswordFocused, armOffset = 20 }) => 
 const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedField }) => {
   const containerRef = useRef(null);
 
-  // Blinking Logic
-  const [isBlinking, setIsBlinking] = useState(false);
-
-  useEffect(() => {
-    const blinkLoop = () => {
-      setIsBlinking(true);
-      setTimeout(() => setIsBlinking(false), 150); // Blink duration
-      
-      // Random interval between 2s and 6s
-      const nextBlink = Math.random() * 4000 + 2000;
-      setTimeout(blinkLoop, nextBlink);
-    };
-    
-    // Start loop
-    const timeoutId = setTimeout(blinkLoop, 3000);
-    return () => clearTimeout(timeoutId);
-  }, []);
-  
   // Animation - specific for "Name" typing shock/bend
   const isNameActive = focusedField === 'name' && isTyping;
 
@@ -133,7 +115,7 @@ const InteractiveCreatures = ({ mousePos, isPasswordFocused, isTyping, focusedFi
   const mouthTransition = { duration: 0.3 };
 
   // Common props for eyes to clean up JSX
-  const eyeProps = { isBlinking, mousePos, isPasswordFocused, containerRef };
+  const eyeProps = { mousePos, isPasswordFocused, containerRef };
 
   return (
     <div ref={containerRef} className="creatures-container">
