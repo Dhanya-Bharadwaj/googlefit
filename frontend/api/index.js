@@ -77,10 +77,18 @@ app.post('/api/signup', (req, res) => {
 // Sign In Route
 app.post('/api/signin', (req, res) => {
   const { loginIdentifier, password } = req.body;
+  
   const users = loadUsers();
-  const user = users.find(u => 
-    (u.email === loginIdentifier || u.phone === loginIdentifier) && u.password === password
-  );
+  
+  // Mobile/Vercel Fix: Trim spaces and handle case-insensitivity
+  const cleanIdentifier = loginIdentifier ? loginIdentifier.trim().toLowerCase() : '';
+  const cleanPassword = password ? password.trim() : '';
+  
+  const user = users.find(u => {
+      const uEmail = u.email ? u.email.toLowerCase() : '';
+      const uPhone = u.phone;
+      return (uEmail === cleanIdentifier || uPhone === loginIdentifier) && u.password === cleanPassword;
+  });
 
   if (user) {
     res.status(200).json({ message: 'Login successful!', user: { name: user.name, email: user.email, steps: user.steps || 0 } });
@@ -89,9 +97,35 @@ app.post('/api/signin', (req, res) => {
   }
 });
 
+// Google Login Route (New)
+app.post('/api/google-login', (req, res) => {
+  const { email, name, picture } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+  
+  const users = loadUsers();
+  let user = users.find(u => u.email === email);
+  
+  if (!user) {
+    // Create new user for Google Login
+    user = {
+      id: Date.now(),
+      name: name || 'Google User',
+      email,
+      steps: 0,
+      picture
+    };
+    users.push(user);
+    saveUsers(users);
+  }
+  
+  res.status(200).json({ message: 'Login successful', user });
+});
+
 // Update Steps Route
 app.post('/api/update-steps', (req, res) => {
   const { email, steps } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+
   const users = loadUsers();
   
   const userIndex = users.findIndex(u => u.email === email);
@@ -100,7 +134,10 @@ app.post('/api/update-steps', (req, res) => {
     saveUsers(users);
     res.json({ message: 'Steps updated.', totalSteps: steps });
   } else {
-    res.status(404).json({ message: 'User not found.' });
+    // Attempt auto-recovery/create if missing? 
+    // In Vercel ephemeral fs, user might be gone. 
+    // Just re-saving the user could work if we had full object, but we only have email/steps here.
+    res.status(404).json({ message: 'User session expired or not found (Vercel Reset). Please re-login.' });
   }
 });
 

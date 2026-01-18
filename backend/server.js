@@ -68,18 +68,28 @@ router.post('/signup', (req, res) => {
 
 // Sign In Route
 router.post('/signin', (req, res) => {
-  const { loginIdentifier, password } = req.body; // loginIdentifier can be email or phone
+  const { loginIdentifier, password } = req.body; 
+
+  console.log(`[Login Attempt] ID: '${loginIdentifier}', Pass: '${password}'`);
 
   const users = loadUsers();
 
-  const user = users.find(u => 
-    (u.email === loginIdentifier || u.phone === loginIdentifier) && u.password === password
-  );
+  // Mobile Fix: Trim spaces and handle case-insensitivity for email
+  const cleanIdentifier = loginIdentifier ? loginIdentifier.trim().toLowerCase() : '';
+  const cleanPassword = password ? password.trim() : '';
+
+  const user = users.find(u => {
+      const uEmail = u.email.toLowerCase();
+      const uPhone = u.phone; // Keep phone as is usually
+      return (uEmail === cleanIdentifier || uPhone === loginIdentifier) && u.password === cleanPassword;
+  });
 
   if (user) {
+    console.log(`[Login Success] User: ${user.name}`);
     res.status(200).json({ message: 'Login successful!', user: { name: user.name, email: user.email, steps: user.steps || 0 } });
   } else {
-    res.status(401).json({ message: 'Invalid credentials.' });
+    console.log(`[Login Failed] No match found.`);
+    res.status(401).json({ message: 'Invalid credentials. Check for typos or extra spaces.' });
   }
 });
 
