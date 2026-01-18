@@ -43,22 +43,22 @@
 /* Response Design */
 @media (max-width: 768px) {
     .final-char, .falling-letter {
-        font-size: 1.8rem; /* Smaller font on tablets/phones */
+        font-size: 2.2rem; /* Kept large as requested */
     }
     
     .final-text-container {
-        gap: 0.5rem;
+        gap: 0.8rem;
     }
 }
 
 @media (max-width: 480px) {
     .final-char, .falling-letter {
-        font-size: 1.4rem; /* Even smaller for small phones */
+        font-size: 1.8rem; /* Still large, but fits screen */
     }
     
     .final-text-container {
-        top: 35%; /* Move up slightly */
-        gap: 0.4rem;
+        top: 35%; 
+        gap: 0.6rem;
     }
 }
 
