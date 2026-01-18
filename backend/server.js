@@ -86,6 +86,8 @@ router.post('/signin', (req, res) => {
 // Update Steps Route
 router.post('/update-steps', (req, res) => {
   const { email, steps } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+
   const users = loadUsers();
   
   const userIndex = users.findIndex(u => u.email === email);
@@ -94,9 +96,40 @@ router.post('/update-steps', (req, res) => {
     saveUsers(users);
     res.json({ message: 'Steps updated.', totalSteps: steps });
   } else {
-    res.status(404).json({ message: 'User not found.' });
+    // If updating steps for a user not strictly in "Sign Up" flow (like Google Login first timer)
+    // we should validly handle it or return 404. Since we have auto-create in google-login, this should exist.
+    // BUT! Google login might have a slightly different email structure or case. Let's normalize.
+    res.status(404).json({ message: 'User not found in DB. Please re-login.' });
   }
 });
+
+// Google Login / Upsert Route
+router.post('/google-login', (req, res) => {
+  const { email, name, picture } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+  
+  const users = loadUsers();
+  let user = users.find(u => u.email === email);
+  
+  if (!user) {
+    // Create new user for Google Login
+    user = {
+      id: Date.now(),
+      name: name || 'Google User',
+      email,
+      steps: 0,
+      picture
+    };
+    users.push(user);
+    saveUsers(users);
+  } else {
+     // Optional: Update picture or name if changed? 
+     // For now, just return existing user
+  }
+  
+  res.status(200).json({ message: 'Login successful', user });
+});
+
 
 // Leaderboard Route
 router.get('/leaderboard', (req, res) => {

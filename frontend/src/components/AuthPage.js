@@ -92,14 +92,30 @@ const AuthPage = () => {
 
             const googleUser = userInfo.data;
 
-            // In a real app, send this to backend to verify/create account
-            // For now, we simulate login with this data
-            const userToStore = {
-                name: googleUser.name,
-                email: googleUser.email,
-                steps: 0,
-                picture: googleUser.picture 
-            };
+            // Register/Login user in Backend to ensure they exist for leaderboard
+            let userToStore;
+            try {
+                const backendResponse = await fetch('/api/google-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: googleUser.name,
+                        email: googleUser.email,
+                        picture: googleUser.picture
+                    })
+                });
+                const backendData = await backendResponse.json();
+                userToStore = backendData.user;
+            } catch (err) {
+                 console.error("Backend login failed", err);
+                 // Fallback to local simulation if backend is down
+                 userToStore = {
+                    name: googleUser.name,
+                    email: googleUser.email,
+                    steps: 0,
+                    picture: googleUser.picture 
+                };
+            }
 
             setStatusMessage({ type: 'success', text: `Welcome, ${googleUser.given_name}!` });
             

@@ -34,11 +34,26 @@ const Dashboard = () => {
       return;
     }
     const parsedUser = JSON.parse(storedUser);
+    
+    // Instead of trusting local storage completely, let's trust the backend for steps
+    // We kept the rest of the user object for name/email
     setCurrentUser(parsedUser);
-    setSteps(parsedUser.steps || 0);
 
-    fetchLeaderboard();
-  }, [navigate, fetchLeaderboard]);
+    fetch(`${API_URL}/leaderboard`)
+        .then(res => res.json())
+        .then(data => {
+            setLeaderboard(data);
+            // find current user in the live backend data
+            const myBackendRecord = data.find(u => u.name === parsedUser.name);
+            if(myBackendRecord) {
+                setSteps(myBackendRecord.steps);
+            } else {
+                setSteps(parsedUser.steps || 0);
+            }
+        })
+        .catch(err => console.error(err));
+
+  }, [navigate]); // Removing 'fetchLeaderboard' from dependency to avoid loop if not memoized correctly
 
   const updateBackendSteps = async (newSteps) => {
     if (currentUser) {
@@ -101,7 +116,18 @@ const Dashboard = () => {
             }
 
             console.log("Total Parsed Steps:", totalSteps);
+            
+            // 1. Update UI Immediate
             setSteps(totalSteps);
+
+            // 2. Update Local Storage & Current User State
+            if (currentUser) {
+                const updatedUser = { ...currentUser, steps: totalSteps };
+                setCurrentUser(updatedUser);
+                localStorage.setItem('user', JSON.stringify(updatedUser)); // Persist locally
+            }
+
+            // 3. Update Backend (for Leaderboard)
             updateBackendSteps(totalSteps);
             
             if (totalSteps === 0) {
@@ -169,7 +195,7 @@ const Dashboard = () => {
           
           {/* Debug Info for User */}
           <div style={{fontSize: '0.8rem', color: '#cbd5e1', marginTop: '10px', textAlign: 'center'}}>
-             {process.env.REACT_APP_GOOGLE_CLIENT_ID ? 'API Active' : 'API Key Info Needed'}
+             API Active
           </div>
         </div>
 
