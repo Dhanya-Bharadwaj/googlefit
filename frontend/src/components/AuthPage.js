@@ -63,7 +63,7 @@ const AuthPage = () => {
         
         // Navigate to dashboard after short delay
         setTimeout(() => {
-            navigate('/dashboard');
+            navigate('/dashboard', { state: { showIntro: true } });
         }, 1000);
 
       } else {

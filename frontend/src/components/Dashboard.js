@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Activity, Trophy, RefreshCw, LogOut } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
+import IntroAnimation from './IntroAnimation';
 import '../styles/Dashboard.css';
 
 const Dashboard = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [showIntro, setShowIntro] = useState(location.state?.showIntro || false);
   const [leaderboard, setLeaderboard] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [steps, setSteps] = useState(0);
-  const navigate = useNavigate();
 
   const API_URL = '/api';
 
@@ -120,6 +123,14 @@ const Dashboard = () => {
     localStorage.removeItem('user');
     navigate('/');
   };
+
+  if (showIntro) {
+      return <IntroAnimation onComplete={() => {
+        setShowIntro(false);
+        // Clear navigation state so refresh doesn't trigger animation again
+        window.history.replaceState({}, document.title);
+      }} />;
+  }
 
   return (
     <div className="dashboard-container">

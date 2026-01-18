@@ -11,9 +11,13 @@ const DB_FILE = path.join(__dirname, 'users.json');
 app.use(cors());
 app.use(bodyParser.json());
 
+// Routes Prefix
+const router = express.Router();
+app.use('/api', router);
+
 // Default Route
 app.get('/', (req, res) => {
-  res.send('Backend Server is Running.');
+  res.send('Backend Server is Running. API available at /api');
 });
 
 // Load users from file
@@ -31,7 +35,7 @@ const saveUsers = (users) => {
 };
 
 // Sign Up Route
-app.post('/signup', (req, res) => {
+router.post('/signup', (req, res) => {
   const { name, age, email, phone, password } = req.body;
   
   if (!email || !password || !name) {
@@ -63,7 +67,7 @@ app.post('/signup', (req, res) => {
 });
 
 // Sign In Route
-app.post('/signin', (req, res) => {
+router.post('/signin', (req, res) => {
   const { loginIdentifier, password } = req.body; // loginIdentifier can be email or phone
 
   const users = loadUsers();
@@ -80,7 +84,7 @@ app.post('/signin', (req, res) => {
 });
 
 // Update Steps Route
-app.post('/update-steps', (req, res) => {
+router.post('/update-steps', (req, res) => {
   const { email, steps } = req.body;
   const users = loadUsers();
   
@@ -95,7 +99,7 @@ app.post('/update-steps', (req, res) => {
 });
 
 // Leaderboard Route
-app.get('/leaderboard', (req, res) => {
+router.get('/leaderboard', (req, res) => {
   const users = loadUsers();
   // Return users sorted by steps (descending), masking sensitive data
   const leaderboard = users
