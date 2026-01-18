@@ -184,9 +184,9 @@ const AuthPage = () => {
           focusedField={focusedField}
         />
         
-        <div className="visuals-logo">
-          ZDAK
-        </div>
+        <h1 className="visuals-logo" style={{ margin: 0 }}>
+          Fitness Tracker
+        </h1>
       </div>
 
       {/* Right Side - Form */}

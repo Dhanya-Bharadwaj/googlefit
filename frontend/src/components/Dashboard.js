@@ -188,7 +188,7 @@ const Dashboard = () => {
       <header className="dashboard-header">
         <div className="logo-section">
           <Activity color="#6200ea" size={32} />
-          <h1>FitTracker Corp</h1>
+          <h1>Fitness Tracker</h1>
         </div>
         <div className="user-section">
           <span>Welcome, {currentUser?.name}</span>
