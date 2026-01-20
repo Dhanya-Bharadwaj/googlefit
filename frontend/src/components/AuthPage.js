@@ -99,7 +99,7 @@ const AuthPage = () => {
   const isPasswordFocused = focusedField === 'password' || showPassword;
 
   const handleGoogleLogin = useGoogleLogin({
-    scope: 'https://www.googleapis.com/auth/fitness.activity.read https://www.googleapis.com/auth/fitness.location.read',
+    scope: 'openid email profile https://www.googleapis.com/auth/fitness.activity.read https://www.googleapis.com/auth/fitness.location.read',
     onSuccess: async (tokenResponse) => {
         try {
             console.log('Google Auth Response:', tokenResponse);
