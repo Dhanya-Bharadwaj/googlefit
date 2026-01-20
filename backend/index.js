@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const admin = require('firebase-admin');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 
@@ -89,13 +90,17 @@ app.post('/api/signup', async (req, res) => {
       }
     }
 
+    // Hash the password before saving
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
     // Create new user in Firebase
     await db.collection('users').doc(cleanEmail).set({
       name,
       email: cleanEmail,
       phone: cleanPhone,
       steps: 0,
-      password,
+      password: hashedPassword, // Store hashed password
       createdAt: new Date().toISOString()
     });
 
@@ -133,18 +138,23 @@ app.post('/api/signin', async (req, res) => {
       }
     }
 
-    if (userData && userData.password === cleanPassword) {
-      res.status(200).json({ 
-        message: 'Login successful!', 
-        user: { 
-          name: userData.name, 
-          email: userData.email, 
-          steps: userData.steps || 0 
-        } 
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid credentials. Check for typos or extra spaces.' });
+    if (userData) {
+      // Compare provided password with hashed password in DB
+      const isMatch = await bcrypt.compare(cleanPassword, userData.password);
+
+      if (isMatch) {
+        return res.status(200).json({ 
+          message: 'Login successful!', 
+          user: { 
+            name: userData.name, 
+            email: userData.email, 
+            steps: userData.steps || 0 
+          } 
+        });
+      }
     }
+
+    res.status(401).json({ message: 'Invalid credentials. Check for typos or extra spaces.' });
   } catch (error) {
     console.error('Signin error:', error);
     res.status(500).json({ message: 'Login failed. Please try again.' });
