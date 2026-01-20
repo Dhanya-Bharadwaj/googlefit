@@ -14,10 +14,13 @@ app.use(bodyParser.json());
 
 // Initialize Firebase Admin SDK
 let db = null;
+let firebaseError = null;
 
 try {
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.log('FIREBASE_SERVICE_ACCOUNT found, length:', process.env.FIREBASE_SERVICE_ACCOUNT.length);
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    console.log('Parsed service account for project:', serviceAccount.project_id);
     
     if (!admin.apps.length) {
       admin.initializeApp({
@@ -28,9 +31,11 @@ try {
     db = admin.firestore();
     console.log('Firebase Admin initialized successfully');
   } else {
-    console.warn('FIREBASE_SERVICE_ACCOUNT not found in environment variables');
+    firebaseError = 'FIREBASE_SERVICE_ACCOUNT environment variable not found';
+    console.warn(firebaseError);
   }
 } catch (error) {
+  firebaseError = error.message;
   console.error('Firebase Admin initialization error:', error.message);
 }
 
@@ -38,14 +43,18 @@ try {
 app.get('/', (req, res) => {
   res.json({ 
     status: 'Backend API is Running',
-    firebase: db ? 'Connected' : 'Not Connected'
+    firebase: db ? 'Connected' : 'Not Connected',
+    error: firebaseError || undefined,
+    envSet: !!process.env.FIREBASE_SERVICE_ACCOUNT
   });
 });
 
 app.get('/api', (req, res) => {
   res.json({ 
     status: 'Backend API is Running',
-    firebase: db ? 'Connected' : 'Not Connected'
+    firebase: db ? 'Connected' : 'Not Connected',
+    error: firebaseError || undefined,
+    envSet: !!process.env.FIREBASE_SERVICE_ACCOUNT
   });
 });
 
