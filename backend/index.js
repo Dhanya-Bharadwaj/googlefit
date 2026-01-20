@@ -5,8 +5,11 @@ const admin = require('firebase-admin');
 
 const app = express();
 
-// CORS - Allow all origins for now (can restrict later)
-app.use(cors());
+// CORS - Restricted to your frontend URL
+app.use(cors({
+  origin: "https://googlefit.vercel.app",
+  credentials: true
+}));
 app.use(bodyParser.json());
 
 // Initialize Firebase Admin SDK
@@ -39,6 +42,7 @@ try {
 // Health check
 app.get('/', (req, res) => {
   res.json({ 
+    message: "✅ API running on Vercel",
     status: 'Backend API is Running',
     firebase: db ? 'Connected' : 'Not Connected',
     error: firebaseError || undefined,
@@ -48,6 +52,7 @@ app.get('/', (req, res) => {
 
 app.get('/api', (req, res) => {
   res.json({ 
+    message: "✅ API running on Vercel",
     status: 'Backend API is Running',
     firebase: db ? 'Connected' : 'Not Connected',
     error: firebaseError || undefined,
