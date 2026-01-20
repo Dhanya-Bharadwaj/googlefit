@@ -99,9 +99,14 @@ const AuthPage = () => {
   const isPasswordFocused = focusedField === 'password' || showPassword;
 
   const handleGoogleLogin = useGoogleLogin({
+    scope: 'https://www.googleapis.com/auth/fitness.activity.read https://www.googleapis.com/auth/fitness.location.read',
     onSuccess: async (tokenResponse) => {
         try {
+            console.log('Google Auth Response:', tokenResponse);
             setStatusMessage({ type: '', text: 'Verifying Google Account...' });
+            
+            // Store the access token for later use in Dashboard to fetch steps
+            localStorage.setItem('google_access_token', tokenResponse.access_token);
             
             // Fetch User Info
             const userInfo = await axios.get(
