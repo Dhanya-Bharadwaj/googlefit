@@ -36,7 +36,7 @@ const saveUsers = (users) => {
 };
 
 // Sign Up Route
-router.post('/signup', (req, res) => {
+router.post('/signup', async (req, res) => {
   const { name, age, email, phone, password } = req.body;
   
   if (!email || !password || !name) {
@@ -44,27 +44,70 @@ router.post('/signup', (req, res) => {
   }
 
   const users = loadUsers();
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPhone = phone ? phone.trim() : '';
 
-  // Check if user exists
-  const existingUser = users.find(u => u.email === email || u.phone === phone);
-  if (existingUser) {
-    return res.status(409).json({ message: 'User with this email or phone already exists.' });
+  // Check if user exists with same email
+  const existingEmailUser = users.find(u => u.email.toLowerCase() === cleanEmail);
+  if (existingEmailUser) {
+    return res.status(409).json({ message: 'User with this email already exists. Please sign in instead.' });
+  }
+
+  // Check if user exists with same phone
+  if (cleanPhone) {
+    const existingPhoneUser = users.find(u => u.phone === cleanPhone);
+    if (existingPhoneUser) {
+      return res.status(409).json({ message: 'User with this phone number already exists. Please sign in instead.' });
+    }
+  }
+
+  // Also check Firebase for existing user
+  if (db) {
+    try {
+      const firebaseUser = await db.collection('users').doc(cleanEmail).get();
+      if (firebaseUser.exists) {
+        return res.status(409).json({ message: 'User with this email already exists. Please sign in instead.' });
+      }
+    } catch (e) {
+      console.error('Firebase check error:', e);
+    }
   }
 
   const newUser = {
     id: Date.now(),
     name,
     age,
-    email,
-    phone,
+    email: cleanEmail,
+    phone: cleanPhone,
     password,
-    steps: 0 // Initialize steps
+    steps: 0,
+    isFirstLogin: true,
+    createdAt: new Date().toISOString()
   };
 
   users.push(newUser);
   saveUsers(users);
 
-  res.status(201).json({ message: 'User registered successfully!', user: { name, email } });
+  // Sync to Firebase
+  if (db) {
+    try {
+      await db.collection('users').doc(cleanEmail).set({
+        name,
+        email: cleanEmail,
+        phone: cleanPhone,
+        steps: 0,
+        createdAt: new Date().toISOString()
+      });
+      console.log(`[Firebase] New user synced: ${cleanEmail}`);
+    } catch (e) {
+      console.error('Firebase sync error:', e);
+    }
+  }
+
+  res.status(201).json({ 
+    message: 'User registered successfully!', 
+    user: { name, email: cleanEmail, steps: 0, isFirstLogin: true } 
+  });
 });
 
 // Sign In Route
@@ -79,15 +122,32 @@ router.post('/signin', (req, res) => {
   const cleanIdentifier = loginIdentifier ? loginIdentifier.trim().toLowerCase() : '';
   const cleanPassword = password ? password.trim() : '';
 
-  const user = users.find(u => {
+  const userIndex = users.findIndex(u => {
       const uEmail = u.email.toLowerCase();
-      const uPhone = u.phone; // Keep phone as is usually
+      const uPhone = u.phone;
       return (uEmail === cleanIdentifier || uPhone === loginIdentifier) && u.password === cleanPassword;
   });
 
-  if (user) {
-    console.log(`[Login Success] User: ${user.name}`);
-    res.status(200).json({ message: 'Login successful!', user: { name: user.name, email: user.email, steps: user.steps || 0 } });
+  if (userIndex !== -1) {
+    const user = users[userIndex];
+    const isFirstLogin = user.isFirstLogin || false;
+    
+    // Update isFirstLogin to false after first login
+    if (isFirstLogin) {
+      users[userIndex].isFirstLogin = false;
+      saveUsers(users);
+    }
+    
+    console.log(`[Login Success] User: ${user.name}, First Login: ${isFirstLogin}`);
+    res.status(200).json({ 
+      message: isFirstLogin ? 'Welcome! This is your first login.' : 'Login successful!', 
+      user: { 
+        name: user.name, 
+        email: user.email, 
+        steps: user.steps || 0,
+        isFirstLogin: isFirstLogin
+      } 
+    });
   } else {
     console.log(`[Login Failed] No match found.`);
     res.status(401).json({ message: 'Invalid credentials. Check for typos or extra spaces.' });
@@ -115,30 +175,65 @@ router.post('/update-steps', (req, res) => {
 });
 
 // Google Login / Upsert Route
-router.post('/google-login', (req, res) => {
+router.post('/google-login', async (req, res) => {
   const { email, name, picture } = req.body;
   if (!email) return res.status(400).json({ message: 'Email required' });
   
+  const cleanEmail = email.trim().toLowerCase();
   const users = loadUsers();
-  let user = users.find(u => u.email === email);
+  let userIndex = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+  let isFirstLogin = false;
+  let user;
   
-  if (!user) {
-    // Create new user for Google Login
+  if (userIndex === -1) {
+    // Create new user for Google Login (First time)
+    isFirstLogin = true;
     user = {
       id: Date.now(),
       name: name || 'Google User',
-      email,
+      email: cleanEmail,
       steps: 0,
-      picture
+      picture,
+      isFirstLogin: false, // Will be false after this login
+      createdAt: new Date().toISOString()
     };
     users.push(user);
     saveUsers(users);
   } else {
-     // Optional: Update picture or name if changed? 
-     // For now, just return existing user
+    user = users[userIndex];
+    isFirstLogin = user.isFirstLogin || false;
+    
+    // Update isFirstLogin to false
+    if (isFirstLogin) {
+      users[userIndex].isFirstLogin = false;
+      saveUsers(users);
+    }
   }
   
-  res.status(200).json({ message: 'Login successful', user });
+  // ALWAYS sync to Firebase (for both new and existing users)
+  if (db) {
+    try {
+      const userRef = db.collection('users').doc(cleanEmail);
+      await userRef.set({
+        name: user.name,
+        email: cleanEmail,
+        steps: user.steps || 0,
+        picture: picture || '',
+        lastLogin: new Date().toISOString()
+      }, { merge: true });
+      console.log(`[Firebase] User synced: ${cleanEmail}`);
+    } catch (e) {
+      console.error('Firebase sync error:', e);
+    }
+  } else {
+    console.warn('[Firebase] DB not initialized - skipping sync');
+  }
+  
+  res.status(200).json({ 
+    message: isFirstLogin ? 'Welcome! Account created successfully.' : 'Login successful', 
+    user: { ...user, isFirstLogin },
+    isFirstLogin 
+  });
 });
 
 
@@ -155,24 +250,48 @@ router.get('/leaderboard', (req, res) => {
 
 // ==================== FIREBASE ROUTES ====================
 
-// Sync user to Firebase
+// Sync user to Firebase (with duplicate check)
 router.post('/firebase/sync-user', async (req, res) => {
   if (!db) return res.status(503).json({ message: 'Firebase not configured' });
   
-  const { name, email, steps } = req.body;
+  const { name, email, phone, steps, checkDuplicate } = req.body;
   if (!email) return res.status(400).json({ message: 'Email required' });
   
+  const cleanEmail = email.trim().toLowerCase();
+  
   try {
-    const userRef = db.collection('users').doc(email);
+    const userRef = db.collection('users').doc(cleanEmail);
     const userSnap = await userRef.get();
     
-    if (!userSnap.exists) {
-      await userRef.set({ name, email, steps: steps || 0 });
-    } else {
-      await userRef.set({ name, email }, { merge: true });
+    // If checking for duplicates during signup
+    if (checkDuplicate && userSnap.exists) {
+      return res.status(409).json({ message: 'User with this email already exists.' });
     }
     
-    res.json({ message: 'User synced to Firebase' });
+    // Check phone number duplicate if provided
+    if (checkDuplicate && phone) {
+      const phoneQuery = await db.collection('users').where('phone', '==', phone).get();
+      if (!phoneQuery.empty) {
+        return res.status(409).json({ message: 'User with this phone number already exists.' });
+      }
+    }
+    
+    if (!userSnap.exists) {
+      // New user
+      await userRef.set({ 
+        name, 
+        email: cleanEmail, 
+        phone: phone || '',
+        steps: steps || 0,
+        isFirstLogin: true,
+        createdAt: new Date().toISOString()
+      });
+      res.json({ message: 'User created in Firebase', isFirstLogin: true });
+    } else {
+      // Existing user - just update name if changed
+      await userRef.set({ name, email: cleanEmail }, { merge: true });
+      res.json({ message: 'User synced to Firebase', isFirstLogin: false });
+    }
   } catch (error) {
     console.error('Firebase sync error:', error);
     res.status(500).json({ message: 'Firebase sync failed' });
