@@ -5,11 +5,8 @@ const admin = require('firebase-admin');
 
 const app = express();
 
-// CORS - Allow frontend to call this API
-app.use(cors({
-  origin: ['http://localhost:3000', 'https://googlefit.vercel.app', process.env.FRONTEND_URL].filter(Boolean),
-  credentials: true
-}));
+// CORS - Allow all origins for now (can restrict later)
+app.use(cors());
 app.use(bodyParser.json());
 
 // Initialize Firebase Admin SDK
