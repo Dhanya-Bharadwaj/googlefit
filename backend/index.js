@@ -69,8 +69,28 @@ app.post('/api/signup', async (req, res) => {
     return res.status(400).json({ message: 'Name, Email, and Password are required.' });
   }
 
+  // 1. Email Validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const cleanEmail = email.trim().toLowerCase();
-  const cleanPhone = phone ? phone.trim() : '';
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
+  // 2. Phone Validation (Must be exactly 10 digits)
+  // Remove any non-numeric characters to check length
+  let cleanPhone = phone ? phone.toString().replace(/\D/g, '') : '';
+  
+  // If it starts with 91 and has 12 digits, strip the 91
+  if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+    cleanPhone = cleanPhone.substring(2);
+  }
+
+  if (cleanPhone.length !== 10) {
+    return res.status(400).json({ message: 'Phone number must be exactly 10 digits.' });
+  }
+
+  // Add Indian Prefix +91
+  const formattedPhone = `+91${cleanPhone}`;
 
   if (!db) {
     return res.status(503).json({ message: 'Database not available. Please try again later.' });
@@ -82,12 +102,10 @@ app.post('/api/signup', async (req, res) => {
       return res.status(409).json({ message: 'User with this email already exists. Please sign in instead.' });
     }
 
-    // Check phone duplicate
-    if (cleanPhone) {
-      const phoneQuery = await db.collection('users').where('phone', '==', cleanPhone).get();
-      if (!phoneQuery.empty) {
-        return res.status(409).json({ message: 'User with this phone number already exists. Please sign in instead.' });
-      }
+    // Check phone duplicate (using the formatted +91 version)
+    const phoneQuery = await db.collection('users').where('phone', '==', formattedPhone).get();
+    if (!phoneQuery.empty) {
+      return res.status(409).json({ message: 'User with this phone number already exists. Please sign in instead.' });
     }
 
     // Hash the password before saving
@@ -98,7 +116,7 @@ app.post('/api/signup', async (req, res) => {
     await db.collection('users').doc(cleanEmail).set({
       name,
       email: cleanEmail,
-      phone: cleanPhone,
+      phone: formattedPhone,
       steps: 0,
       password: hashedPassword, // Store hashed password
       createdAt: new Date().toISOString()
@@ -118,7 +136,7 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/signin', async (req, res) => {
   const { loginIdentifier, password } = req.body;
   
-  const cleanIdentifier = loginIdentifier ? loginIdentifier.trim().toLowerCase() : '';
+  let cleanIdentifier = loginIdentifier ? loginIdentifier.trim().toLowerCase() : '';
   const cleanPassword = password ? password.trim() : '';
 
   if (!db) {
@@ -132,7 +150,13 @@ app.post('/api/signin', async (req, res) => {
 
     // If not found by email, try phone
     if (!userData) {
-      const phoneQuery = await db.collection('users').where('phone', '==', loginIdentifier).get();
+      // Check if it's a 10-digit number, then format with +91
+      let searchPhone = cleanIdentifier.replace(/\D/g, '');
+      if (searchPhone.length === 12 && searchPhone.startsWith('91')) searchPhone = searchPhone.substring(2);
+      
+      const formattedSearchPhone = searchPhone.length === 10 ? `+91${searchPhone}` : cleanIdentifier;
+
+      const phoneQuery = await db.collection('users').where('phone', '==', formattedSearchPhone).get();
       if (!phoneQuery.empty) {
         userData = phoneQuery.docs[0].data();
       }
