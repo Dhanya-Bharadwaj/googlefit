@@ -1,0 +1,9 @@
+# Firebase Service Account Key - NEVER commit this!
+serviceAccountKey.json
+fitness-tracker-85542-firebase-adminsdk-fbsvc-a269c0ff18.json
+
+# Node modules
+node_modules/
+
+# Environment variables
+.env

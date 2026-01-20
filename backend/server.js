@@ -3,6 +3,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { db } = require('./firebaseAdmin');
 
 const app = express();
 const PORT = 5000;
@@ -151,6 +152,94 @@ router.get('/leaderboard', (req, res) => {
   
   res.json(leaderboard);
 });
+
+// ==================== FIREBASE ROUTES ====================
+
+// Sync user to Firebase
+router.post('/firebase/sync-user', async (req, res) => {
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  const { name, email, steps } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+  
+  try {
+    const userRef = db.collection('users').doc(email);
+    const userSnap = await userRef.get();
+    
+    if (!userSnap.exists) {
+      await userRef.set({ name, email, steps: steps || 0 });
+    } else {
+      await userRef.set({ name, email }, { merge: true });
+    }
+    
+    res.json({ message: 'User synced to Firebase' });
+  } catch (error) {
+    console.error('Firebase sync error:', error);
+    res.status(500).json({ message: 'Firebase sync failed' });
+  }
+});
+
+// Update steps in Firebase
+router.post('/firebase/update-steps', async (req, res) => {
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  const { email, name, steps } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+  
+  try {
+    const userRef = db.collection('users').doc(email);
+    await userRef.set({ 
+      steps, 
+      name: name || 'Unknown',
+      email 
+    }, { merge: true });
+    
+    res.json({ message: 'Steps updated in Firebase', steps });
+  } catch (error) {
+    console.error('Firebase update error:', error);
+    res.status(500).json({ message: 'Firebase update failed' });
+  }
+});
+
+// Get leaderboard from Firebase
+router.get('/firebase/leaderboard', async (req, res) => {
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  try {
+    const snapshot = await db.collection('users')
+      .orderBy('steps', 'desc')
+      .get();
+    
+    const leaderboard = snapshot.docs.map(doc => doc.data());
+    res.json(leaderboard);
+  } catch (error) {
+    console.error('Firebase leaderboard error:', error);
+    res.status(500).json({ message: 'Failed to fetch leaderboard' });
+  }
+});
+
+// Get user steps from Firebase
+router.get('/firebase/user-steps/:email', async (req, res) => {
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  const { email } = req.params;
+  
+  try {
+    const userRef = db.collection('users').doc(email);
+    const userSnap = await userRef.get();
+    
+    if (userSnap.exists) {
+      res.json({ steps: userSnap.data().steps || 0 });
+    } else {
+      res.json({ steps: 0 });
+    }
+  } catch (error) {
+    console.error('Firebase get steps error:', error);
+    res.status(500).json({ message: 'Failed to get steps' });
+  }
+});
+
+// ==================== END FIREBASE ROUTES ====================
 
 // For Vercel Serverless (Export the App)
 if (process.env.NODE_ENV !== 'production') {

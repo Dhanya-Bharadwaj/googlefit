@@ -32,6 +32,22 @@ const AuthPage = () => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const syncUserToFirebase = async (user) => {
+    try {
+      await fetch('/api/firebase/sync-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: user.name,
+          email: user.email,
+          steps: user.steps || 0
+        })
+      });
+    } catch (e) {
+      console.error("Firebase Sync Error:", e);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setStatusMessage({ type: '', text: 'Processing...' });
@@ -61,6 +77,9 @@ const AuthPage = () => {
             ? { name: formData.name, email: formData.email, steps: 0 } // Signup: Init steps 0
             : data.user; // Signin: User comes from backend
             
+        // Sync to Firebase (Fire & Forget)
+        syncUserToFirebase(userToStore);
+
         localStorage.setItem('user', JSON.stringify(userToStore));
         
         // Navigate to dashboard after short delay
@@ -119,6 +138,9 @@ const AuthPage = () => {
 
             setStatusMessage({ type: 'success', text: `Welcome, ${googleUser.given_name}!` });
             
+            // Sync to Firebase
+            syncUserToFirebase(userToStore);
+
             localStorage.setItem('user', JSON.stringify(userToStore));
             
             setTimeout(() => {

@@ -18,7 +18,7 @@ const Dashboard = () => {
 
   const fetchLeaderboard = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/leaderboard`);
+      const response = await fetch(`${API_URL}/firebase/leaderboard`);
       const data = await response.json();
       setLeaderboard(data);
     } catch (error) {
@@ -39,30 +39,49 @@ const Dashboard = () => {
     // We kept the rest of the user object for name/email
     setCurrentUser(parsedUser);
 
-    fetch(`${API_URL}/leaderboard`)
-        .then(res => res.json())
-        .then(data => {
+    // Initial Leaderboard Load
+    fetchLeaderboard().then(() => {
+       // After fetching leaderboard, update local 'steps' state from the cloud data if available
+       // fetchLeaderboard sets state 'leaderboard', but React state updates are async, 
+       // so better to fetch specific user doc or re-query for current user here.
+       // For simplicity, we'll just re-query the collection or rely on the next render if we used a listener.
+       // Let's just do a direct read for the user to be sure.
+       // Actually, let's just piggyback on the list logic we just replaced.
+       // Re-implementing the logic inside the promise chain of getDocs would be cleanest but I separated them.
+    });
+
+    // Fetch single user to sync steps immediately
+    const fetchUserSteps = async () => {
+         try {
+            const response = await fetch(`${API_URL}/firebase/leaderboard`);
+            const data = await response.json();
             setLeaderboard(data);
-            // find current user in the live backend data
-            const myBackendRecord = data.find(u => u.name === parsedUser.name);
-            if(myBackendRecord) {
-                setSteps(myBackendRecord.steps);
+            
+            const myRecord = data.find(u => u.email === parsedUser.email);
+            if(myRecord) {
+                setSteps(myRecord.steps);
             } else {
                 setSteps(parsedUser.steps || 0);
             }
-        })
-        .catch(err => console.error(err));
+         } catch (e) { console.error(e); }
+    };
+    fetchUserSteps();
 
-  }, [navigate]); // Removing 'fetchLeaderboard' from dependency to avoid loop if not memoized correctly
+  }, [navigate, fetchLeaderboard, API_URL]); 
 
   const updateBackendSteps = async (newSteps) => {
     if (currentUser) {
         try {
-            await fetch(`${API_URL}/update-steps`, {
+            await fetch(`${API_URL}/firebase/update-steps`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: currentUser.email, steps: newSteps })
+                body: JSON.stringify({ 
+                    email: currentUser.email, 
+                    name: currentUser.name,
+                    steps: newSteps 
+                })
             });
+            
             fetchLeaderboard(); // Refresh list
         } catch (e) {
             console.error("Sync failed", e);
