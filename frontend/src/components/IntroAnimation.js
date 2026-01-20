@@ -7,19 +7,8 @@ const IntroAnimation = ({ onComplete }) => {
     const text = 'FITNESS TRACKER AT ELOCITY';
     
     const fullText = useMemo(() => text.split(''), [text]);
-    const lettersToCatch = useMemo(() => text.replace(/\s/g, '').split(''), [text]);
-  
-    // Generate sequence for catching (Target X positions)
-    // Distributed across the screen width roughly, with some randomness
-    const [catchPositions] = useState(() => 
-      lettersToCatch.map(() => (Math.random() * 500) - 250) 
-    );
     
     // Calculate Timing for perfect sync
-    const dropDuration = 0.8; // Quicker drop
-    const stagger = 0.4; // Time between letters
-    const totalCatchTime = (lettersToCatch.length * stagger) + dropDuration + 1;
-
     useEffect(() => {
       const sequence = async () => {
         // Step 0: Fall IN (1s)
@@ -29,13 +18,9 @@ const IntroAnimation = ({ onComplete }) => {
         setStep(1);
         await new Promise(r => setTimeout(r, 1500)); 
   
-        // Step 2: Basket (1s)
+        // Step 2: Show Basket already full (1s)
         setStep(2);
         await new Promise(r => setTimeout(r, 1000));
-  
-        // Step 3: Catch (Dynamic)
-        setStep(3);
-        await new Promise(r => setTimeout(r, totalCatchTime * 1000));
   
         // Step 4: Arrange (Go to each letter)
         setStep(4);
@@ -49,19 +34,25 @@ const IntroAnimation = ({ onComplete }) => {
         onComplete();
       };
       sequence();
-    }, [onComplete, lettersToCatch.length, fullText.length, totalCatchTime]);
+    }, [onComplete, fullText.length]);
 
     return (
         <div className="intro-container">
              <style>
                 {`
                     @import url('https://fonts.googleapis.com/css2?family=Philosopher:ital,wght@0,700;1,700&display=swap');
-                    .final-char, .falling-letter {
+                    .final-char, .falling-letter, .basket-letter {
                         font-family: 'Philosopher', sans-serif !important;
                         font-weight: 700;
                         font-style: italic;
                         letter-spacing: 1px;
                         text-transform: uppercase;
+                    }
+                    .basket-letter {
+                        position: absolute;
+                        font-size: 1.2rem;
+                        color: #4b5563;
+                        pointer-events: none;
                     }
                 `}
             </style>
@@ -77,8 +68,6 @@ const IntroAnimation = ({ onComplete }) => {
                                     const i = globalIndex;
                                     globalIndex++;
                                     // Check if this char belongs to 'ELOCITY'
-                                    // 'FITNESS TRACKER AT ELOCITY'
-                                    // Index of E is 19
                                     const isGreen = i >= 19; 
 
                                     return (
@@ -110,25 +99,10 @@ const IntroAnimation = ({ onComplete }) => {
                 })()}
             </div>
 
-            {/* Falling Letters */}
-            {step === 3 && lettersToCatch.map((char, i) => (
-                <FallingLetter 
-                    key={i} 
-                    char={char} 
-                    targetX={catchPositions[i]} 
-                    delay={i * stagger} 
-                    duration={dropDuration}
-                />
-            ))}
-
             {/* Creature */}
             <CreatureWrapper 
                 step={step} 
-                catchPositions={catchPositions} 
                 totalLetters={fullText.length}
-                stagger={stagger}
-                dropDuration={dropDuration} 
-                totalCatchTime={totalCatchTime}
             />
 
             {/* Skip Button */}
@@ -170,61 +144,7 @@ const IntroAnimation = ({ onComplete }) => {
     )
 }
 
-const FallingLetter = ({ char, targetX, delay, duration }) => {
-    return (
-        <motion.div
-            className="falling-letter"
-            initial={{ x: targetX, y: -400, opacity: 0, scale: 0 }}
-            animate={{ 
-                y: 160, // Deep into basket
-                scale: 0.8,
-                opacity: 1
-            }} 
-            transition={{ 
-                duration: duration, 
-                delay: delay,
-                ease: "easeIn"
-            }}
-            style={{
-                position: 'absolute',
-                top: 0,
-                left: '50%',
-                marginLeft: '-1rem' 
-            }}
-        >
-            <motion.div
-                animate={{ opacity: 0 }}
-                transition={{ delay: delay + duration, duration: 0.1 }}
-            >
-                {char}
-            </motion.div>
-        </motion.div>
-    );
-};
-
-const CreatureWrapper = ({ step, catchPositions, totalLetters, stagger, dropDuration, totalCatchTime }) => {
-    
-    // Construct Keyframes for precision catching
-    // The creature needs to be at catchPositions[i] at time (i * stagger) + dropDuration
-    
-    const xKeyframes = [0];
-    const times = [0];
-
-    catchPositions.forEach((pos, i) => {
-        const catchTime = (i * stagger) + dropDuration;
-        const normalizedTime = catchTime / totalCatchTime;
-        
-        // Add a "approach" point? No, just linear to the catch point is fine for now
-        // But we want to hold there for a split second?
-        
-        xKeyframes.push(pos);
-        times.push(normalizedTime);
-    });
-
-    // Return to center at end
-    xKeyframes.push(0);
-    times.push(1);
-
+const CreatureWrapper = ({ step, totalLetters }) => {
     const xArrange = [-400, 400];
 
     return (
@@ -232,27 +152,22 @@ const CreatureWrapper = ({ step, catchPositions, totalLetters, stagger, dropDura
             className="creature-wrapper"
             initial={{ y: -600, x: 0 }}
             animate={{
-                // Step 5: Text is at 40% top, Center is 50%. Difference is ~10vh. 
-                // We move up (-100px) to aligning with the text row.
                 y: step === 5 ? -50 : 150, 
-                // Step 5: Move to left of text. Text width approx 800px. Start is ~ -400. 
-                // We want to be immediately beside F. Creature width is 40.
-                x: step === 3 ? xKeyframes : (step === 4 ? xArrange : (step === 5 ? -425 : 0)),
+                x: step === 4 ? xArrange : (step === 5 ? -425 : 0),
             }}
             transition={
                 step === 0 ? { type: "spring", bounce: 0.4, duration: 1 } :
-                step === 3 ? { duration: totalCatchTime, times: times, ease: "linear" } : 
                 step === 4 ? { duration: totalLetters * 0.1 + 1, ease: "linear" } : 
                 step === 5 ? { duration: 1.5, type: "spring", bounce: 0.2 } :
                 { duration: 0.5 }
             }
         >
-             <CreatureBody step={step} isCatching={step === 3} catchDuration={totalCatchTime} />
+             <CreatureBody step={step} />
         </motion.div>
     )
 }
 
-const CreatureBody = ({ step, isCatching, catchDuration }) => {
+const CreatureBody = ({ step }) => {
     return (
         <React.Fragment>
              {/* Basket */}
@@ -264,14 +179,19 @@ const CreatureBody = ({ step, isCatching, catchDuration }) => {
                         y: -60, 
                         opacity: 1, 
                         scale: step === 5 ? 0 : 1,
-                        // Shake when catching
-                        rotate: isCatching ? [0, -5, 5, 0] : 0
                     }} 
-                    transition={{ 
-                        type: "spring", bounce: 0.4,
-                        rotate: { repeat: isCatching ? Infinity : 0, duration: 0.2 }
-                    }}
-                 />
+                    transition={{ type: "spring", bounce: 0.4 }}
+                 >
+                    {/* Letters already in basket */}
+                    {step < 4 && (
+                        <>
+                            <div className="basket-letter" style={{ top: 10, left: 15, transform: 'rotate(-15deg)' }}>F</div>
+                            <div className="basket-letter" style={{ top: 5, left: 35, transform: 'rotate(10deg)' }}>I</div>
+                            <div className="basket-letter" style={{ top: 15, left: 50, transform: 'rotate(-5deg)' }}>T</div>
+                            <div className="basket-letter" style={{ top: 8, left: 25, transform: 'rotate(20deg)' }}>N</div>
+                        </>
+                    )}
+                 </motion.div>
              )}
              
              {/* Main Body */}
@@ -289,12 +209,10 @@ const CreatureBody = ({ step, isCatching, catchDuration }) => {
                       } 
                     : step === 4
                     ? { width: 80, height: 100, borderRadius: "40px", backgroundColor: "#fb923c", rotate: 0 } 
-                    : step === 3
-                    ? { width: 110, height: 115, borderRadius: "48%", backgroundColor: "#fb923c", rotate: 0 } 
                     : { width: 140, height: 120, borderRadius: "50%", backgroundColor: "#fb923c", rotate: 0 } 
                 }
                 transition={{ 
-                    duration: step === 3 ? catchDuration : (step === 4 ? 4 : 1), 
+                    duration: step === 4 ? 4 : 1, 
                     ease: "easeInOut" 
                 }}
              >
