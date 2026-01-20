@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
+import API_URL from '../config/api';
 import InteractiveCreatures from './InteractiveCreatures';
 import { Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -34,7 +35,7 @@ const AuthPage = () => {
 
   const syncUserToFirebase = async (user) => {
     try {
-      await fetch('/api/firebase/sync-user', {
+      await fetch(`${API_URL}/api/firebase/sync-user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -52,8 +53,7 @@ const AuthPage = () => {
     e.preventDefault();
     setStatusMessage({ type: '', text: 'Processing...' });
 
-    const API_URL = '/api';
-    const endpoint = isSignUp ? `${API_URL}/signup` : `${API_URL}/signin`;
+    const endpoint = isSignUp ? `${API_URL}/api/signup` : `${API_URL}/api/signin`;
     const payload = isSignUp 
       ? { name: formData.name, age: formData.age, email: formData.email, phone: formData.phone, password: formData.password }
       : { loginIdentifier: formData.email, password: formData.password }; // We re-use 'email' field state for loginIdentifier input
@@ -114,7 +114,7 @@ const AuthPage = () => {
             // Register/Login user in Backend to ensure they exist for leaderboard
             let userToStore;
             try {
-                const backendResponse = await fetch('/api/google-login', {
+                const backendResponse = await fetch(`${API_URL}/api/google-login`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

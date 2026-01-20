@@ -3,6 +3,7 @@ import { Activity, Trophy, RefreshCw, LogOut } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
+import API_URL from '../config/api';
 import IntroAnimation from './IntroAnimation';
 import '../styles/Dashboard.css';
 
@@ -14,17 +15,15 @@ const Dashboard = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [steps, setSteps] = useState(0);
 
-  const API_URL = '/api';
-
   const fetchLeaderboard = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/firebase/leaderboard`);
+      const response = await fetch(`${API_URL}/api/firebase/leaderboard`);
       const data = await response.json();
       setLeaderboard(data);
     } catch (error) {
       console.error('Error fetching leaderboard:', error);
     }
-  }, [API_URL]);
+  }, []);
 
   useEffect(() => {
     // Load user from local storage (set during login)
@@ -53,7 +52,7 @@ const Dashboard = () => {
     // Fetch single user to sync steps immediately
     const fetchUserSteps = async () => {
          try {
-            const response = await fetch(`${API_URL}/firebase/leaderboard`);
+            const response = await fetch(`${API_URL}/api/firebase/leaderboard`);
             const data = await response.json();
             setLeaderboard(data);
             
@@ -67,12 +66,12 @@ const Dashboard = () => {
     };
     fetchUserSteps();
 
-  }, [navigate, fetchLeaderboard, API_URL]); 
+  }, [navigate, fetchLeaderboard]); 
 
   const updateBackendSteps = async (newSteps) => {
     if (currentUser) {
         try {
-            await fetch(`${API_URL}/firebase/update-steps`, {
+            await fetch(`${API_URL}/api/firebase/update-steps`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
