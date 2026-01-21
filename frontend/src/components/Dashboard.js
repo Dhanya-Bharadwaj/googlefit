@@ -111,6 +111,26 @@ const Dashboard = () => {
         return;
       }
 
+      // Check what data sources this account has
+      try {
+        const dsResponse = await axios.get(
+          'https://www.googleapis.com/fitness/v1/users/me/dataSources',
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        const stepSources = dsResponse.data.dataSource?.filter(ds => 
+          ds.dataType.name === "com.google.step_count.delta"
+        ) || [];
+        console.log(`Account ${tokenOwner.email} has ${stepSources.length} step data sources:`, stepSources.map(s => s.dataStreamId));
+        
+        if (stepSources.length === 0) {
+          alert(`⚠️ No Step Data Found!\n\nThe account ${tokenOwner.email} has no step tracking data sources.\n\nThis means:\n1. Google Fit is not installed on a phone with this account, OR\n2. This account has never recorded any steps\n\nPlease install Google Fit on a phone logged into this Google account.`);
+          setIsSyncing(false);
+          return;
+        }
+      } catch (dsError) {
+        console.log("Could not fetch data sources:", dsError.message);
+      }
+
       // 1. Fetch Step Count for Today (Start of day to Now)
       const now = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
@@ -229,6 +249,18 @@ const Dashboard = () => {
 
       console.log("Final Total Steps:", totalSteps);
 
+      // VERIFICATION: Show user exactly what was fetched and from where
+      const verificationInfo = `
+📊 SYNC VERIFICATION
+━━━━━━━━━━━━━━━━━━━━
+Token Owner: ${tokenOwner.email}
+Logged In As: ${currentUser.email}
+Steps Found: ${totalSteps}
+Date Range: ${new Date(startTimeMillis).toLocaleDateString()} 
+Time: ${new Date().toLocaleTimeString()}
+━━━━━━━━━━━━━━━━━━━━`;
+      console.log(verificationInfo);
+
       // Update the LOGGED IN user's steps (using their stored email, not a new OAuth)
       const timeStr = new Date().toLocaleTimeString();
       setLastSyncTime(timeStr);
@@ -262,9 +294,9 @@ const Dashboard = () => {
       fetchLeaderboard();
 
       if (totalSteps > 0) {
-        alert(`✅ Synced Successfully!\n\nAccount: ${currentUser.email}\nSteps: ${totalSteps.toLocaleString()}\nTime: ${timeStr}\n\nIf this is lower than your phone, open Google Fit app and pull down to refresh.`);
+        alert(`✅ Synced Successfully!\n\n🔐 Verified Account: ${tokenOwner.email}\n📧 Saving to: ${currentUser.email}\n👣 Steps: ${totalSteps.toLocaleString()}\n🕐 Time: ${timeStr}\n\nIf this doesn't match your phone, open Google Fit app and pull down to refresh.`);
       } else {
-        alert(`⚠️ Sync Complete\n\nAccount: ${currentUser.email}\n0 steps found for today.\n\nTips:\n1. Open Google Fit app on phone and pull down to refresh\n2. Make sure you're logged into the same Google account\n3. Wait 10 seconds and sync again`);
+        alert(`⚠️ Sync Complete\n\n🔐 Verified Account: ${tokenOwner.email}\n📧 Saving to: ${currentUser.email}\n👣 0 steps found for today.\n\nThis account may not have Google Fit activity.\n\nTips:\n1. Make sure Google Fit is installed on a phone logged into ${tokenOwner.email}\n2. Open Google Fit app and pull down to refresh\n3. Walk a few steps and try again`);
       }
 
     } catch (error) {
