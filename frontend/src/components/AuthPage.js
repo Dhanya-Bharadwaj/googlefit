@@ -99,41 +99,44 @@ const AuthPage = () => {
 
   const handleGoogleLogin = useGoogleLogin({
     scope: 'openid email profile https://www.googleapis.com/auth/fitness.activity.read',
-    flow: 'auth-code', // Use authorization code flow to get refresh token
-    access_type: 'offline', // Request refresh token
-    prompt: 'consent', // Force consent to ensure refresh token is returned
-    onSuccess: async (codeResponse) => {
+    onSuccess: async (tokenResponse) => {
         try {
-            console.log('Google Auth Code Response:', codeResponse);
+            console.log('Google Token Response:', tokenResponse);
+            const accessToken = tokenResponse.access_token;
             setStatusMessage({ type: '', text: 'Verifying Google Account...' });
             
-            // Send the authorization code to backend to exchange for tokens
-            const tokenExchangeResponse = await fetch(`${API_URL}/api/google-auth-callback`, {
+            // Get user info from Google
+            const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            const googleUser = await userInfoResponse.json();
+            
+            // Save user + token to backend (which stores in Firebase)
+            const backendResponse = await fetch(`${API_URL}/api/google-login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    code: codeResponse.code
+                    email: googleUser.email,
+                    name: googleUser.name,
+                    picture: googleUser.picture,
+                    accessToken: accessToken // Store token for sync-all feature
                 })
             });
             
-            const tokenData = await tokenExchangeResponse.json();
+            const backendData = await backendResponse.json();
             
-            if (!tokenExchangeResponse.ok) {
-                throw new Error(tokenData.message || 'Failed to exchange token');
+            if (!backendResponse.ok) {
+                throw new Error(backendData.message || 'Backend login failed');
             }
             
-            const { user, accessToken } = tokenData;
+            const user = backendData.user;
             
-            // Store the access token locally for immediate use
+            // Store locally
             localStorage.setItem('google_access_token', accessToken);
             localStorage.setItem('google_token_email', user.email.toLowerCase());
+            localStorage.setItem('user', JSON.stringify(user));
 
             setStatusMessage({ type: 'success', text: `Welcome, ${user.name}!` });
-            
-            // Sync to Firebase
-            syncUserToFirebase(user);
-
-            localStorage.setItem('user', JSON.stringify(user));
             
             setTimeout(() => {
                 navigate('/dashboard', { state: { showIntro: true } });
