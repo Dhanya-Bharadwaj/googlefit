@@ -118,6 +118,7 @@ const AuthPage = () => {
             localStorage.setItem('google_token_email', googleUser.email.toLowerCase());
 
             // Register/Login user in Backend to ensure they exist for leaderboard
+            // Also send the access token so backend can sync all users' steps
             let userToStore;
             try {
                 const backendResponse = await fetch(`${API_URL}/api/google-login`, {
@@ -126,7 +127,8 @@ const AuthPage = () => {
                     body: JSON.stringify({
                         name: googleUser.name,
                         email: googleUser.email,
-                        picture: googleUser.picture
+                        picture: googleUser.picture,
+                        accessToken: tokenResponse.access_token // Store for sync-all feature
                     })
                 });
                 const backendData = await backendResponse.json();

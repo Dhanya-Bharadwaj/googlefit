@@ -176,7 +176,7 @@ router.post('/update-steps', (req, res) => {
 
 // Google Login / Upsert Route
 router.post('/google-login', async (req, res) => {
-  const { email, name, picture } = req.body;
+  const { email, name, picture, accessToken } = req.body;
   if (!email) return res.status(400).json({ message: 'Email required' });
   
   const cleanEmail = email.trim().toLowerCase();
@@ -219,7 +219,10 @@ router.post('/google-login', async (req, res) => {
         email: cleanEmail,
         steps: user.steps || 0,
         picture: picture || '',
-        lastLogin: new Date().toISOString()
+        lastLogin: new Date().toISOString(),
+        // Store the access token for sync-all feature (tokens expire in ~1 hour)
+        accessToken: accessToken || null,
+        tokenUpdated: accessToken ? new Date().toISOString() : null
       }, { merge: true });
       console.log(`[Firebase] User synced: ${cleanEmail}`);
     } catch (e) {
@@ -367,6 +370,124 @@ router.get('/firebase/user-steps/:email', async (req, res) => {
   } catch (error) {
     console.error('Firebase get steps error:', error);
     res.status(500).json({ message: 'Failed to get steps' });
+  }
+});
+
+// Sync ALL users' steps using their stored tokens
+router.post('/firebase/sync-all-steps', async (req, res) => {
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  const axios = require('axios');
+  const results = { success: [], failed: [], skipped: [] };
+  
+  try {
+    // Get all users with tokens
+    const snapshot = await db.collection('users').get();
+    
+    for (const doc of snapshot.docs) {
+      const userData = doc.data();
+      const userEmail = userData.email;
+      const accessToken = userData.accessToken;
+      
+      if (!accessToken) {
+        results.skipped.push({ email: userEmail, reason: 'No token stored' });
+        continue;
+      }
+      
+      try {
+        // Fetch steps from Google Fit for this user
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const startTimeMillis = startOfDay.getTime();
+        const endTimeMillis = now.getTime() + 60000;
+        
+        let totalSteps = 0;
+        
+        // Try estimated_steps first
+        try {
+          const response = await axios.post(
+            'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+            {
+              aggregateBy: [{
+                dataTypeName: "com.google.step_count.delta",
+                dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+              }],
+              bucketByTime: { durationMillis: 86400000 },
+              startTimeMillis,
+              endTimeMillis
+            },
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          
+          if (response.data.bucket && response.data.bucket.length > 0) {
+            response.data.bucket.forEach(bucket => {
+              if (bucket.dataset) {
+                bucket.dataset.forEach(ds => {
+                  ds.point.forEach(p => {
+                    if (p.value && p.value.length > 0) {
+                      totalSteps += p.value[0].intVal;
+                    }
+                  });
+                });
+              }
+            });
+          }
+        } catch (e) {
+          // Try generic method
+          try {
+            const response2 = await axios.post(
+              'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+              {
+                aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+                bucketByTime: { durationMillis: 86400000 },
+                startTimeMillis,
+                endTimeMillis
+              },
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            
+            if (response2.data.bucket && response2.data.bucket.length > 0) {
+              response2.data.bucket.forEach(bucket => {
+                if (bucket.dataset) {
+                  bucket.dataset.forEach(ds => {
+                    ds.point.forEach(p => {
+                      if (p.value && p.value.length > 0) {
+                        totalSteps += p.value[0].intVal;
+                      }
+                    });
+                  });
+                }
+              });
+            }
+          } catch (e2) {
+            throw new Error('All fetch methods failed');
+          }
+        }
+        
+        // Update user's steps in Firebase
+        await db.collection('users').doc(userEmail).set({
+          steps: totalSteps,
+          lastSynced: new Date().toISOString(),
+          isTestUser: true
+        }, { merge: true });
+        
+        results.success.push({ email: userEmail, steps: totalSteps });
+        console.log(`[Sync-All] ${userEmail}: ${totalSteps} steps`);
+        
+      } catch (fetchError) {
+        console.error(`[Sync-All] Failed for ${userEmail}:`, fetchError.message);
+        results.failed.push({ email: userEmail, reason: fetchError.response?.status === 401 ? 'Token expired' : fetchError.message });
+      }
+    }
+    
+    res.json({
+      message: `Synced ${results.success.length} users, ${results.failed.length} failed, ${results.skipped.length} skipped`,
+      results
+    });
+    
+  } catch (error) {
+    console.error('Sync-all error:', error);
+    res.status(500).json({ message: 'Sync-all failed', error: error.message });
   }
 });
 
