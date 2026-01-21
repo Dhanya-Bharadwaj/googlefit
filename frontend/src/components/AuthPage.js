@@ -105,16 +105,17 @@ const AuthPage = () => {
             console.log('Google Auth Response:', tokenResponse);
             setStatusMessage({ type: '', text: 'Verifying Google Account...' });
             
-            // Store the access token for later use in Dashboard to fetch steps
-            localStorage.setItem('google_access_token', tokenResponse.access_token);
-            
-            // Fetch User Info
+            // Fetch User Info FIRST to get the email
             const userInfo = await axios.get(
                 'https://www.googleapis.com/oauth2/v3/userinfo',
                 { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } }
             );
 
             const googleUser = userInfo.data;
+            
+            // Store the access token AND the email it belongs to
+            localStorage.setItem('google_access_token', tokenResponse.access_token);
+            localStorage.setItem('google_token_email', googleUser.email.toLowerCase());
 
             // Register/Login user in Backend to ensure they exist for leaderboard
             let userToStore;

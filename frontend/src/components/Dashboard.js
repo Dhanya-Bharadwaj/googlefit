@@ -79,6 +79,7 @@ const Dashboard = () => {
   // Sync function that uses the STORED access token from login (no new account selection)
   const syncGoogleFitSteps = async () => {
     const accessToken = localStorage.getItem('google_access_token');
+    const tokenEmail = localStorage.getItem('google_token_email'); // Email associated with the token
     
     if (!accessToken) {
       alert("No Google account connected.\n\nPlease log out and sign in again with Google to enable step syncing.");
@@ -93,7 +94,22 @@ const Dashboard = () => {
     setIsSyncing(true);
 
     try {
-      console.log("Using stored access token for:", currentUser.email);
+      // IMPORTANT: Verify the token belongs to the logged-in user
+      const userInfoResponse = await axios.get(
+        'https://www.googleapis.com/oauth2/v3/userinfo',
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      const tokenOwner = userInfoResponse.data;
+      
+      console.log("Token belongs to:", tokenOwner.email);
+      console.log("Logged in as:", currentUser.email);
+
+      // Check if token matches logged-in user
+      if (tokenOwner.email.toLowerCase() !== currentUser.email.toLowerCase()) {
+        alert(`⚠️ Token Mismatch!\n\nYou are logged in as: ${currentUser.email}\nBut the Google token belongs to: ${tokenOwner.email}\n\nPlease log out and sign in again with the correct Google account.`);
+        setIsSyncing(false);
+        return;
+      }
 
       // 1. Fetch Step Count for Today (Start of day to Now)
       const now = new Date();
@@ -274,6 +290,9 @@ const Dashboard = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('user');
+    localStorage.removeItem('google_access_token');
+    localStorage.removeItem('google_token_email');
+    localStorage.removeItem('last_sync_time');
     navigate('/');
   };
 
