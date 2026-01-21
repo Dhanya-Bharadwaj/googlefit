@@ -76,26 +76,6 @@ const Dashboard = () => {
 
   }, [navigate, fetchLeaderboard]); 
 
-  const updateBackendSteps = async (newSteps) => {
-    if (currentUser) {
-        try {
-            await fetch(`${API_URL}/api/firebase/update-steps`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    email: currentUser.email, 
-                    name: currentUser.name,
-                    steps: newSteps 
-                })
-            });
-            
-            fetchLeaderboard(); // Refresh list
-        } catch (e) {
-            console.error("Sync failed", e);
-        }
-    }
-  };
-
   // Sync function that uses the STORED access token from login (no new account selection)
   const syncGoogleFitSteps = async () => {
     const accessToken = localStorage.getItem('google_access_token');
