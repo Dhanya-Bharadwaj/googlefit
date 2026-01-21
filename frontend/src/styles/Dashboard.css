@@ -181,6 +181,46 @@
     margin-top: 16px;
 }
 
+.accuracy-tip {
+    margin-top: 24px;
+    padding: 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    text-align: left;
+}
+
+.accuracy-tip h3 {
+    font-size: 0.85rem;
+    color: #475569;
+    margin: 0 0 8px 0;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.accuracy-tip ol {
+    font-size: 0.8rem;
+    color: #64748b;
+    padding-left: 18px;
+    margin: 0;
+}
+
+.accuracy-tip li {
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.accuracy-tip p {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin: 12px 0 0 0;
+    font-style: italic;
+    text-align: center;
+    border-top: 1px dashed #e2e8f0;
+    padding-top: 10px;
+}
+
 /* Leaderboard Panel */
 .leaderboard-header {
     display: flex;

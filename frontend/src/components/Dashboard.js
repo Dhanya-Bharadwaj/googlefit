@@ -14,6 +14,7 @@ const Dashboard = () => {
   const [leaderboard, setLeaderboard] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [steps, setSteps] = useState(0);
+  const [lastSyncTime, setLastSyncTime] = useState(localStorage.getItem('last_sync_time') || '--');
 
   const fetchLeaderboard = useCallback(async () => {
     try {
@@ -112,18 +113,25 @@ const Dashboard = () => {
 
             // 2. Fetch Step Count for Today (Start of day to Now)
             const now = new Date();
-            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            
+            // Set to beginning of TODAY in local time
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
             const startTimeMillis = startOfDay.getTime();
-            const endTimeMillis = now.getTime();
+            
+            // Set to end of TODAY (23:59:59) or just "now" for current progress
+            // Using "now" is correct for current progress, but we'll add 1 minute buffer for safety against server clock skew
+            const endTimeMillis = now.getTime() + 60000; 
+
+            console.log("Syncing range:", new Date(startTimeMillis).toLocaleString(), "to", new Date(endTimeMillis).toLocaleString());
 
             const response = await axios.post(
                 'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
                 {
                     aggregateBy: [{
-                        dataTypeName: "com.google.step_count.delta",
-                        dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+                        dataTypeName: "com.google.step_count.delta"
+                        // removed dataSourceId to allow Google to auto-merge all available sensors/sources
                     }],
-                    bucketByTime: { durationMillis: 86400000 }, // 24h bucket ensures we get the daily total
+                    bucketByTime: { durationMillis: 86400000 }, 
                     startTimeMillis,
                     endTimeMillis
                 },
@@ -164,6 +172,9 @@ const Dashboard = () => {
 
             // 3. Update State & Backend
             setSteps(totalSteps);
+            const timeStr = new Date().toLocaleTimeString();
+            setLastSyncTime(timeStr);
+            localStorage.setItem('last_sync_time', timeStr);
 
             if (currentUser) {
                 const updatedUser = { ...currentUser, steps: totalSteps };
@@ -172,7 +183,6 @@ const Dashboard = () => {
                 updateBackendSteps(totalSteps);
             }
             
-            const timeStr = new Date().toLocaleTimeString();
             if (totalSteps > 0) {
                 alert(`Successfully Synced!\n\nSteps: ${totalSteps}\nTime: ${timeStr}\n\nNote: If this is lower than your phone, please "Pull Down to Refresh" inside your mobile Google Fit app.`);
             } else {
@@ -253,6 +263,16 @@ const Dashboard = () => {
           <p className="sync-note">
             Tap sync to update your steps from the cloud.
           </p>
+          
+          <div className="accuracy-tip">
+            <h3>Syncing Issues?</h3>
+            <ol>
+              <li>Open <strong>Google Fit app</strong> on your phone.</li>
+              <li>Pull down on the main screen to <strong>Force Sync</strong>.</li>
+              <li>Wait 10 seconds, then click the sync button above.</li>
+            </ol>
+            <p>Last Synced: {lastSyncTime}</p>
+          </div>
           
           {/* Debug Info for User */}
           <div style={{fontSize: '0.8rem', color: '#cbd5e1', marginTop: '10px', textAlign: 'center'}}>
