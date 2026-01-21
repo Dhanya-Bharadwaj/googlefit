@@ -296,6 +296,31 @@
     font-weight: 600;
     color: #334155;
     padding: 0 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.user-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.user-email {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-weight: 400;
+}
+
+.test-badge {
+    background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    color: white;
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
 }
 
 .user-steps {
@@ -306,6 +331,46 @@
     padding: 4px 12px;
     border-radius: 20px;
     font-size: 0.9rem;
+}
+
+/* Test Users Section */
+.test-users-section {
+    margin-bottom: 24px;
+    padding-bottom: 24px;
+    border-bottom: 2px dashed #e2e8f0;
+}
+
+.test-users-header, .all-users-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #64748b;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.test-users-header {
+    color: #8b5cf6;
+}
+
+.test-user-item {
+    background: linear-gradient(135deg, #faf5ff, #f3e8ff) !important;
+    border-color: #ddd6fe !important;
+}
+
+.test-user-item::after {
+    content: '🧪';
+    position: absolute;
+    right: -8px;
+    top: -8px;
+    font-size: 1rem;
+}
+
+.is-test-user {
+    position: relative;
 }
 
 /* Mobile Responsive */

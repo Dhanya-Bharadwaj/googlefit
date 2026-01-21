@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Activity, Trophy, RefreshCw, LogOut } from 'lucide-react';
+import { Activity, Trophy, RefreshCw, LogOut, Users, TestTube2 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
@@ -95,21 +95,28 @@ const Dashboard = () => {
             const accessToken = tokenResponse.access_token;
             console.log("Access Token:", accessToken);
 
-            // 1. Check if the user actually has Google Fit Data Sources
-            // This helps identify if they've ever used the app with this account.
-            const dsResponse = await axios.get(
-                'https://www.googleapis.com/fitness/v1/users/me/dataSources',
+            // 0. First, get the Google account info of the person syncing
+            const userInfoResponse = await axios.get(
+                'https://www.googleapis.com/oauth2/v3/userinfo',
                 { headers: { Authorization: `Bearer ${accessToken}` } }
             );
-            
-            const hasStepSource = dsResponse.data.dataSource.some(ds => 
-                ds.dataType.name === "com.google.step_count.delta"
-            );
+            const syncingUser = userInfoResponse.data;
+            console.log("Syncing account:", syncingUser.email);
 
-            if (!hasStepSource) {
-                 alert("Account Error: It looks like this Google account hasn't logged into the Google Fit app on a mobile device yet, or no activity data exists.");
-                 return;
+            // 1. Check if the user actually has Google Fit Data Sources
+            let dsResponse;
+            try {
+                dsResponse = await axios.get(
+                    'https://www.googleapis.com/fitness/v1/users/me/dataSources',
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                );
+            } catch (dsError) {
+                console.error("Data Sources Error:", dsError);
+                alert(`Account "${syncingUser.email}" does not have Google Fit data or hasn't granted permission.\n\nPlease ensure:\n1. Google Fit app is installed on your phone\n2. You've logged into Google Fit with this account\n3. You've walked at least a few steps`);
+                return;
             }
+            
+            console.log("Available Data Sources:", dsResponse.data.dataSource?.map(ds => ds.dataType.name));
 
             // 2. Fetch Step Count for Today (Start of day to Now)
             const now = new Date();
@@ -124,77 +131,164 @@ const Dashboard = () => {
 
             console.log("Syncing range:", new Date(startTimeMillis).toLocaleString(), "to", new Date(endTimeMillis).toLocaleString());
 
-            const response = await axios.post(
-                'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-                {
-                    aggregateBy: [{
-                        dataTypeName: "com.google.step_count.delta"
-                        // removed dataSourceId to allow Google to auto-merge all available sensors/sources
-                    }],
-                    bucketByTime: { durationMillis: 86400000 }, 
-                    startTimeMillis,
-                    endTimeMillis
-                },
-                {
-                    headers: { Authorization: `Bearer ${accessToken}` }
-                }
-            );
-            
-            console.log("Google Fit Aggregate Response:", response.data);
-
-            // Parse steps from the bucket
+            // Try multiple data sources for maximum accuracy
             let totalSteps = 0;
-            if (response.data.bucket && response.data.bucket.length > 0) {
-                response.data.bucket.forEach(bucket => {
-                    if (bucket.dataset) {
-                        bucket.dataset.forEach(ds => {
-                            ds.point.forEach(p => {
-                                if (p.value && p.value.length > 0) {
-                                    totalSteps += p.value[0].intVal;
-                                }
+            
+            // Method 1: Try the merged/estimated steps first (most accurate)
+            try {
+                const response = await axios.post(
+                    'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+                    {
+                        aggregateBy: [{
+                            dataTypeName: "com.google.step_count.delta",
+                            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+                        }],
+                        bucketByTime: { durationMillis: 86400000 }, 
+                        startTimeMillis,
+                        endTimeMillis
+                    },
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                );
+                
+                if (response.data.bucket && response.data.bucket.length > 0) {
+                    response.data.bucket.forEach(bucket => {
+                        if (bucket.dataset) {
+                            bucket.dataset.forEach(ds => {
+                                ds.point.forEach(p => {
+                                    if (p.value && p.value.length > 0) {
+                                        totalSteps += p.value[0].intVal;
+                                    }
+                                });
                             });
+                        }
+                    });
+                }
+                console.log("Method 1 (estimated_steps):", totalSteps);
+            } catch (e) {
+                console.log("Method 1 failed, trying Method 2...");
+            }
+
+            // Method 2: If Method 1 returns 0, try the generic aggregation
+            if (totalSteps === 0) {
+                try {
+                    const response2 = await axios.post(
+                        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+                        {
+                            aggregateBy: [{
+                                dataTypeName: "com.google.step_count.delta"
+                            }],
+                            bucketByTime: { durationMillis: 86400000 }, 
+                            startTimeMillis,
+                            endTimeMillis
+                        },
+                        { headers: { Authorization: `Bearer ${accessToken}` } }
+                    );
+                    
+                    if (response2.data.bucket && response2.data.bucket.length > 0) {
+                        response2.data.bucket.forEach(bucket => {
+                            if (bucket.dataset) {
+                                bucket.dataset.forEach(ds => {
+                                    ds.point.forEach(p => {
+                                        if (p.value && p.value.length > 0) {
+                                            totalSteps += p.value[0].intVal;
+                                        }
+                                    });
+                                });
+                            }
                         });
                     }
-                });
+                    console.log("Method 2 (generic):", totalSteps);
+                } catch (e) {
+                    console.log("Method 2 also failed");
+                }
             }
 
-            console.log("Total Accurate Steps:", totalSteps);
-            
-            // Safety Check: Prevent accidental overwrites if cloud hasn't synced yet
-            if (totalSteps === 0 && steps > 0) {
-                 const confirmOverwrite = window.confirm(
-                     `Google Fit is reporting 0 steps for today.\n\n` +
-                     `If you have actually walked today, please open the Google Fit app on your phone and "Pull down to refresh" to sync your phone to the Google Cloud.\n\n` +
-                     `Do you want to reset your progress to 0?`
-                 );
-                 if (!confirmOverwrite) return;
+            // Method 3: If still 0, try merge_step_deltas
+            if (totalSteps === 0) {
+                try {
+                    const response3 = await axios.post(
+                        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+                        {
+                            aggregateBy: [{
+                                dataTypeName: "com.google.step_count.delta",
+                                dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:merge_step_deltas"
+                            }],
+                            bucketByTime: { durationMillis: 86400000 }, 
+                            startTimeMillis,
+                            endTimeMillis
+                        },
+                        { headers: { Authorization: `Bearer ${accessToken}` } }
+                    );
+                    
+                    if (response3.data.bucket && response3.data.bucket.length > 0) {
+                        response3.data.bucket.forEach(bucket => {
+                            if (bucket.dataset) {
+                                bucket.dataset.forEach(ds => {
+                                    ds.point.forEach(p => {
+                                        if (p.value && p.value.length > 0) {
+                                            totalSteps += p.value[0].intVal;
+                                        }
+                                    });
+                                });
+                            }
+                        });
+                    }
+                    console.log("Method 3 (merge_step_deltas):", totalSteps);
+                } catch (e) {
+                    console.log("Method 3 also failed");
+                }
             }
 
-            // 3. Update State & Backend
-            setSteps(totalSteps);
+            console.log("Final Total Steps:", totalSteps);
+
+            // 3. Update the SYNCING USER's data in backend (not the logged-in user)
             const timeStr = new Date().toLocaleTimeString();
             setLastSyncTime(timeStr);
             localStorage.setItem('last_sync_time', timeStr);
 
-            if (currentUser) {
+            // Update backend for the Google account that was synced
+            try {
+                await fetch(`${API_URL}/api/firebase/update-steps`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        email: syncingUser.email, 
+                        name: syncingUser.name,
+                        steps: totalSteps,
+                        isTestUser: true,
+                        lastSynced: new Date().toISOString()
+                    })
+                });
+                console.log(`Updated steps for ${syncingUser.email}: ${totalSteps}`);
+            } catch (e) {
+                console.error("Backend update failed", e);
+            }
+
+            // If the syncing user is the same as logged-in user, update local state too
+            if (currentUser && syncingUser.email.toLowerCase() === currentUser.email?.toLowerCase()) {
+                setSteps(totalSteps);
                 const updatedUser = { ...currentUser, steps: totalSteps };
                 setCurrentUser(updatedUser);
                 localStorage.setItem('user', JSON.stringify(updatedUser));
-                updateBackendSteps(totalSteps);
             }
             
+            // Refresh leaderboard to show updated data
+            fetchLeaderboard();
+            
             if (totalSteps > 0) {
-                alert(`Successfully Synced!\n\nSteps: ${totalSteps}\nTime: ${timeStr}\n\nNote: If this is lower than your phone, please "Pull Down to Refresh" inside your mobile Google Fit app.`);
+                alert(`✅ Synced for: ${syncingUser.email}\n\nSteps: ${totalSteps.toLocaleString()}\nTime: ${timeStr}\n\nNote: If this is lower than your phone, please "Pull Down to Refresh" inside your mobile Google Fit app.`);
             } else {
-                alert(`Sync Complete.\n\n0 steps found for today.\n\nIf you have steps on your phone, ensure you are logged into the same account and have synced the mobile app to the cloud.`);
+                alert(`⚠️ Sync Complete for: ${syncingUser.email}\n\n0 steps found for today.\n\nPossible reasons:\n1. Phone hasn't synced to cloud yet (open Google Fit app and pull down)\n2. No walking activity recorded today\n3. Different Google account than the one on your phone`);
             }
 
         } catch (error) {
             console.error("Critical Sync Error:", error);
             if (error.response?.status === 403) {
                 alert("Permission Denied: Ensure you haven't restricted access to physical activity data in the Google Consent Screen.");
+            } else if (error.response?.status === 401) {
+                alert("Authentication Error: Please try syncing again.");
             } else {
-                alert("Failed to connect to Google Fit. Please try again or check your internet connection.");
+                alert("Failed to connect to Google Fit. Please try again or check your internet connection.\n\nError: " + (error.message || "Unknown"));
             }
         }
     },
@@ -202,7 +296,7 @@ const Dashboard = () => {
         console.error("OAuth Error:", error);
         alert("Authentication failed. Please try again.");
     },
-    scope: 'https://www.googleapis.com/auth/fitness.activity.read'
+    scope: 'openid email profile https://www.googleapis.com/auth/fitness.activity.read'
   });
 
   const initiateSync = () => {
@@ -289,25 +383,60 @@ const Dashboard = () => {
             <h2>Company Leaderboard</h2>
           </div>
           
-          <div className="leaderboard-list">
-            {leaderboard.length > 0 ? (
-              leaderboard.map((user, index) => (
-                <div 
-                  key={index} 
-                  className={`leaderboard-item ${user.name === currentUser?.name ? 'current-user' : ''}`}
-                >
-                  <div className="rank">{index + 1}</div>
-                  <div className="user-info">
-                    <span className="user-name">{user.name}</span>
+          {/* Test Users Section */}
+          {leaderboard.filter(u => u.isTestUser).length > 0 && (
+            <div className="test-users-section">
+              <div className="test-users-header">
+                <TestTube2 size={16} color="#8b5cf6" />
+                <span>Test Users (Google Fit Synced)</span>
+              </div>
+              <div className="leaderboard-list">
+                {leaderboard.filter(u => u.isTestUser).sort((a, b) => b.steps - a.steps).map((user, index) => (
+                  <div 
+                    key={`test-${index}`} 
+                    className={`leaderboard-item test-user-item ${user.email === currentUser?.email ? 'current-user' : ''}`}
+                  >
+                    <div className="rank">{index + 1}</div>
+                    <div className="user-info">
+                      <span className="user-name">{user.name}</span>
+                      <span className="user-email">{user.email}</span>
+                    </div>
+                    <div className="user-steps">{(user.steps || 0).toLocaleString()}</div>
                   </div>
-                  <div className="user-steps">{user.steps.toLocaleString()}</div>
-                </div>
-              ))
-            ) : (
-                <div style={{padding: '20px', textAlign: 'center', color: '#64748b'}}>
-                    Loading leaderboard...
-                </div>
-            )}
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* All Users Section */}
+          <div className="all-users-section">
+            <div className="all-users-header">
+              <Users size={16} color="#64748b" />
+              <span>All Registered Users</span>
+            </div>
+            <div className="leaderboard-list">
+              {leaderboard.length > 0 ? (
+                leaderboard.map((user, index) => (
+                  <div 
+                    key={index} 
+                    className={`leaderboard-item ${user.email === currentUser?.email ? 'current-user' : ''} ${user.isTestUser ? 'is-test-user' : ''}`}
+                  >
+                    <div className="rank">{index + 1}</div>
+                    <div className="user-info">
+                      <span className="user-name">
+                        {user.name}
+                        {user.isTestUser && <span className="test-badge">TEST</span>}
+                      </span>
+                    </div>
+                    <div className="user-steps">{(user.steps || 0).toLocaleString()}</div>
+                  </div>
+                ))
+              ) : (
+                  <div style={{padding: '20px', textAlign: 'center', color: '#64748b'}}>
+                      Loading leaderboard...
+                  </div>
+              )}
+            </div>
           </div>
         </div>
       </main>

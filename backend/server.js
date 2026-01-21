@@ -302,18 +302,21 @@ router.post('/firebase/sync-user', async (req, res) => {
 router.post('/firebase/update-steps', async (req, res) => {
   if (!db) return res.status(503).json({ message: 'Firebase not configured' });
   
-  const { email, name, steps } = req.body;
+  const { email, name, steps, isTestUser, lastSynced } = req.body;
   if (!email) return res.status(400).json({ message: 'Email required' });
   
   try {
-    const userRef = db.collection('users').doc(email);
+    const cleanEmail = email.trim().toLowerCase();
+    const userRef = db.collection('users').doc(cleanEmail);
     await userRef.set({ 
       steps, 
       name: name || 'Unknown',
-      email 
+      email: cleanEmail,
+      isTestUser: isTestUser || false,
+      lastSynced: lastSynced || new Date().toISOString()
     }, { merge: true });
     
-    res.json({ message: 'Steps updated in Firebase', steps });
+    res.json({ message: 'Steps updated in Firebase', steps, email: cleanEmail });
   } catch (error) {
     console.error('Firebase update error:', error);
     res.status(500).json({ message: 'Firebase update failed' });
@@ -329,7 +332,16 @@ router.get('/firebase/leaderboard', async (req, res) => {
       .orderBy('steps', 'desc')
       .get();
     
-    const leaderboard = snapshot.docs.map(doc => doc.data());
+    const leaderboard = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        name: data.name,
+        email: data.email,
+        steps: data.steps || 0,
+        isTestUser: data.isTestUser || false,
+        lastSynced: data.lastSynced || null
+      };
+    });
     res.json(leaderboard);
   } catch (error) {
     console.error('Firebase leaderboard error:', error);
