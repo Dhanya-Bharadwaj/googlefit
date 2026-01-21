@@ -181,6 +181,64 @@
     margin-top: 16px;
 }
 
+.sync-note strong {
+    color: #6366f1;
+}
+
+/* Top User Card */
+.top-user-card {
+    margin-top: 20px;
+    padding: 16px;
+    background: linear-gradient(135deg, #fef3c7, #fde68a);
+    border: 2px solid #f59e0b;
+    border-radius: 12px;
+}
+
+.top-user-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #92400e;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.top-user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.top-user-name {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #78350f;
+}
+
+.top-user-steps {
+    font-size: 0.9rem;
+    color: #92400e;
+    font-weight: 600;
+}
+
+/* Spinning animation for sync button */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spinning {
+    animation: spin 1s linear infinite;
+}
+
+.sync-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
 .accuracy-tip {
     margin-top: 24px;
     padding: 16px;
