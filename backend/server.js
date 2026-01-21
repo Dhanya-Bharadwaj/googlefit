@@ -3,11 +3,17 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 const { db } = require('./firebaseAdmin');
 
 const app = express();
 const PORT = 5000;
 const DB_FILE = path.join(__dirname, 'users.json');
+
+// Google OAuth credentials - set these in environment variables
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '771043035883-pd8m6muu3es7dcfn57so3onot8rk197h.apps.googleusercontent.com';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || ''; // You need to set this!
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'postmessage'; // For popup flow
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -34,6 +40,115 @@ const loadUsers = () => {
 const saveUsers = (users) => {
   fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
 };
+
+// Helper function to refresh access token using refresh token
+const refreshAccessToken = async (refreshToken) => {
+  try {
+    const response = await axios.post('https://oauth2.googleapis.com/token', {
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token'
+    });
+    return response.data.access_token;
+  } catch (error) {
+    console.error('Failed to refresh token:', error.response?.data || error.message);
+    return null;
+  }
+};
+
+// Google Auth Callback - Exchange auth code for tokens (including refresh token)
+router.post('/google-auth-callback', async (req, res) => {
+  const { code } = req.body;
+  
+  if (!code) {
+    return res.status(400).json({ message: 'Authorization code required' });
+  }
+  
+  if (!GOOGLE_CLIENT_SECRET) {
+    console.error('GOOGLE_CLIENT_SECRET is not set!');
+    return res.status(500).json({ message: 'Server configuration error: Client secret not set' });
+  }
+  
+  try {
+    // Exchange authorization code for tokens
+    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_REDIRECT_URI,
+      grant_type: 'authorization_code'
+    });
+    
+    const { access_token, refresh_token, expires_in } = tokenResponse.data;
+    console.log('Token exchange successful. Refresh token received:', !!refresh_token);
+    
+    // Get user info
+    const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+    
+    const googleUser = userInfoResponse.data;
+    const cleanEmail = googleUser.email.trim().toLowerCase();
+    
+    // Save/update user in local DB
+    const users = loadUsers();
+    let userIndex = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    let user;
+    
+    if (userIndex === -1) {
+      user = {
+        id: Date.now(),
+        name: googleUser.name,
+        email: cleanEmail,
+        picture: googleUser.picture,
+        steps: 0,
+        createdAt: new Date().toISOString()
+      };
+      users.push(user);
+    } else {
+      user = users[userIndex];
+    }
+    saveUsers(users);
+    
+    // Save to Firebase with refresh token (for sync-all feature)
+    if (db) {
+      try {
+        await db.collection('users').doc(cleanEmail).set({
+          name: googleUser.name,
+          email: cleanEmail,
+          picture: googleUser.picture,
+          steps: user.steps || 0,
+          refreshToken: refresh_token || null, // Store refresh token!
+          accessToken: access_token,
+          tokenExpiry: Date.now() + (expires_in * 1000),
+          lastLogin: new Date().toISOString()
+        }, { merge: true });
+        console.log(`[Firebase] User saved with refresh token: ${cleanEmail}`);
+      } catch (e) {
+        console.error('Firebase save error:', e);
+      }
+    }
+    
+    res.json({
+      message: 'Login successful',
+      user: {
+        name: googleUser.name,
+        email: cleanEmail,
+        picture: googleUser.picture,
+        steps: user.steps || 0
+      },
+      accessToken: access_token
+    });
+    
+  } catch (error) {
+    console.error('Token exchange error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      message: 'Failed to authenticate with Google',
+      error: error.response?.data?.error_description || error.message 
+    });
+  }
+});
 
 // Sign Up Route
 router.post('/signup', async (req, res) => {
@@ -373,12 +488,75 @@ router.get('/firebase/user-steps/:email', async (req, res) => {
   }
 });
 
-// Sync ALL users' steps using their stored tokens
+// Sync ALL users' steps using their stored tokens (with refresh token support)
 router.post('/firebase/sync-all-steps', async (req, res) => {
   if (!db) return res.status(503).json({ message: 'Firebase not configured' });
   
-  const axios = require('axios');
   const results = { success: [], failed: [], skipped: [] };
+  
+  // Helper function to fetch steps with a given token
+  async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis) {
+    let totalSteps = 0;
+    
+    // Try estimated_steps first
+    try {
+      const response = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{
+            dataTypeName: "com.google.step_count.delta",
+            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+          }],
+          bucketByTime: { durationMillis: 86400000 },
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      if (response.data.bucket && response.data.bucket.length > 0) {
+        response.data.bucket.forEach(bucket => {
+          if (bucket.dataset) {
+            bucket.dataset.forEach(ds => {
+              ds.point.forEach(p => {
+                if (p.value && p.value.length > 0) {
+                  totalSteps += p.value[0].intVal;
+                }
+              });
+            });
+          }
+        });
+      }
+      return totalSteps;
+    } catch (e) {
+      // Try generic method
+      const response2 = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+          bucketByTime: { durationMillis: 86400000 },
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      if (response2.data.bucket && response2.data.bucket.length > 0) {
+        response2.data.bucket.forEach(bucket => {
+          if (bucket.dataset) {
+            bucket.dataset.forEach(ds => {
+              ds.point.forEach(p => {
+                if (p.value && p.value.length > 0) {
+                  totalSteps += p.value[0].intVal;
+                }
+              });
+            });
+          }
+        });
+      }
+      return totalSteps;
+    }
+  }
   
   try {
     // Get all users with tokens
@@ -387,80 +565,60 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
     for (const doc of snapshot.docs) {
       const userData = doc.data();
       const userEmail = userData.email;
-      const accessToken = userData.accessToken;
+      let accessToken = userData.accessToken;
+      const refreshToken = userData.refreshToken;
       
-      if (!accessToken) {
-        results.skipped.push({ email: userEmail, reason: 'No token stored' });
+      if (!accessToken && !refreshToken) {
+        results.skipped.push({ email: userEmail, reason: 'No tokens stored' });
         continue;
       }
       
       try {
-        // Fetch steps from Google Fit for this user
         const now = new Date();
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
         const startTimeMillis = startOfDay.getTime();
         const endTimeMillis = now.getTime() + 60000;
         
         let totalSteps = 0;
+        let tokenRefreshed = false;
         
-        // Try estimated_steps first
-        try {
-          const response = await axios.post(
-            'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-            {
-              aggregateBy: [{
-                dataTypeName: "com.google.step_count.delta",
-                dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
-              }],
-              bucketByTime: { durationMillis: 86400000 },
-              startTimeMillis,
-              endTimeMillis
-            },
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
-          
-          if (response.data.bucket && response.data.bucket.length > 0) {
-            response.data.bucket.forEach(bucket => {
-              if (bucket.dataset) {
-                bucket.dataset.forEach(ds => {
-                  ds.point.forEach(p => {
-                    if (p.value && p.value.length > 0) {
-                      totalSteps += p.value[0].intVal;
-                    }
-                  });
-                });
-              }
-            });
-          }
-        } catch (e) {
-          // Try generic method
+        // Try with current access token first
+        if (accessToken) {
           try {
-            const response2 = await axios.post(
-              'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-              {
-                aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
-                bucketByTime: { durationMillis: 86400000 },
-                startTimeMillis,
-                endTimeMillis
-              },
-              { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            
-            if (response2.data.bucket && response2.data.bucket.length > 0) {
-              response2.data.bucket.forEach(bucket => {
-                if (bucket.dataset) {
-                  bucket.dataset.forEach(ds => {
-                    ds.point.forEach(p => {
-                      if (p.value && p.value.length > 0) {
-                        totalSteps += p.value[0].intVal;
-                      }
-                    });
-                  });
-                }
-              });
+            totalSteps = await fetchStepsWithToken(accessToken, startTimeMillis, endTimeMillis);
+          } catch (tokenError) {
+            // If 401 (expired), try refreshing
+            if (tokenError.response?.status === 401 && refreshToken) {
+              console.log(`[Sync-All] Token expired for ${userEmail}, refreshing...`);
+              const newToken = await refreshAccessToken(refreshToken);
+              if (newToken) {
+                accessToken = newToken;
+                tokenRefreshed = true;
+                // Update stored access token
+                await db.collection('users').doc(userEmail).set({
+                  accessToken: newToken
+                }, { merge: true });
+                totalSteps = await fetchStepsWithToken(newToken, startTimeMillis, endTimeMillis);
+              } else {
+                throw new Error('Failed to refresh token');
+              }
+            } else {
+              throw tokenError;
             }
-          } catch (e2) {
-            throw new Error('All fetch methods failed');
+          }
+        } else if (refreshToken) {
+          // No access token but have refresh token
+          console.log(`[Sync-All] No access token for ${userEmail}, using refresh token...`);
+          const newToken = await refreshAccessToken(refreshToken);
+          if (newToken) {
+            accessToken = newToken;
+            tokenRefreshed = true;
+            await db.collection('users').doc(userEmail).set({
+              accessToken: newToken
+            }, { merge: true });
+            totalSteps = await fetchStepsWithToken(newToken, startTimeMillis, endTimeMillis);
+          } else {
+            throw new Error('Failed to refresh token');
           }
         }
         
@@ -471,12 +629,19 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
           isTestUser: true
         }, { merge: true });
         
-        results.success.push({ email: userEmail, steps: totalSteps });
-        console.log(`[Sync-All] ${userEmail}: ${totalSteps} steps`);
+        results.success.push({ 
+          email: userEmail, 
+          steps: totalSteps,
+          tokenRefreshed 
+        });
+        console.log(`[Sync-All] ${userEmail}: ${totalSteps} steps${tokenRefreshed ? ' (token refreshed)' : ''}`);
         
       } catch (fetchError) {
         console.error(`[Sync-All] Failed for ${userEmail}:`, fetchError.message);
-        results.failed.push({ email: userEmail, reason: fetchError.response?.status === 401 ? 'Token expired' : fetchError.message });
+        results.failed.push({ 
+          email: userEmail, 
+          reason: fetchError.response?.status === 401 ? 'Token expired and refresh failed' : fetchError.message 
+        });
       }
     }
     

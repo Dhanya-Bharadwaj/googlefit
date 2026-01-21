@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
-import axios from 'axios';
 import API_URL from '../config/api';
 import InteractiveCreatures from './InteractiveCreatures';
 import { Eye, EyeOff } from 'lucide-react';
@@ -100,56 +99,41 @@ const AuthPage = () => {
 
   const handleGoogleLogin = useGoogleLogin({
     scope: 'openid email profile https://www.googleapis.com/auth/fitness.activity.read',
-    onSuccess: async (tokenResponse) => {
+    flow: 'auth-code', // Use authorization code flow to get refresh token
+    access_type: 'offline', // Request refresh token
+    prompt: 'consent', // Force consent to ensure refresh token is returned
+    onSuccess: async (codeResponse) => {
         try {
-            console.log('Google Auth Response:', tokenResponse);
+            console.log('Google Auth Code Response:', codeResponse);
             setStatusMessage({ type: '', text: 'Verifying Google Account...' });
             
-            // Fetch User Info FIRST to get the email
-            const userInfo = await axios.get(
-                'https://www.googleapis.com/oauth2/v3/userinfo',
-                { headers: { Authorization: `Bearer ${tokenResponse.access_token}` } }
-            );
-
-            const googleUser = userInfo.data;
+            // Send the authorization code to backend to exchange for tokens
+            const tokenExchangeResponse = await fetch(`${API_URL}/api/google-auth-callback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: codeResponse.code
+                })
+            });
             
-            // Store the access token AND the email it belongs to
-            localStorage.setItem('google_access_token', tokenResponse.access_token);
-            localStorage.setItem('google_token_email', googleUser.email.toLowerCase());
-
-            // Register/Login user in Backend to ensure they exist for leaderboard
-            // Also send the access token so backend can sync all users' steps
-            let userToStore;
-            try {
-                const backendResponse = await fetch(`${API_URL}/api/google-login`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: googleUser.name,
-                        email: googleUser.email,
-                        picture: googleUser.picture,
-                        accessToken: tokenResponse.access_token // Store for sync-all feature
-                    })
-                });
-                const backendData = await backendResponse.json();
-                userToStore = backendData.user;
-            } catch (err) {
-                 console.error("Backend login failed", err);
-                 // Fallback to local simulation if backend is down
-                 userToStore = {
-                    name: googleUser.name,
-                    email: googleUser.email,
-                    steps: 0,
-                    picture: googleUser.picture 
-                };
+            const tokenData = await tokenExchangeResponse.json();
+            
+            if (!tokenExchangeResponse.ok) {
+                throw new Error(tokenData.message || 'Failed to exchange token');
             }
+            
+            const { user, accessToken } = tokenData;
+            
+            // Store the access token locally for immediate use
+            localStorage.setItem('google_access_token', accessToken);
+            localStorage.setItem('google_token_email', user.email.toLowerCase());
 
-            setStatusMessage({ type: 'success', text: `Welcome, ${googleUser.given_name}!` });
+            setStatusMessage({ type: 'success', text: `Welcome, ${user.name}!` });
             
             // Sync to Firebase
-            syncUserToFirebase(userToStore);
+            syncUserToFirebase(user);
 
-            localStorage.setItem('user', JSON.stringify(userToStore));
+            localStorage.setItem('user', JSON.stringify(user));
             
             setTimeout(() => {
                 navigate('/dashboard', { state: { showIntro: true } });
@@ -157,10 +141,13 @@ const AuthPage = () => {
 
         } catch (error) {
             console.error(error);
-            setStatusMessage({ type: 'error', text: 'Google Login Failed' });
+            setStatusMessage({ type: 'error', text: 'Google Login Failed: ' + (error.message || 'Unknown error') });
         }
     },
-    onError: () => setStatusMessage({ type: 'error', text: 'Google Login Failed' }),
+    onError: (error) => {
+        console.error('Google Login Error:', error);
+        setStatusMessage({ type: 'error', text: 'Google Login Failed' });
+    },
   });
 
   // Render Input Helper
