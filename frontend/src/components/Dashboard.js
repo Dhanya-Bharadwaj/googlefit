@@ -94,20 +94,36 @@ const Dashboard = () => {
             const accessToken = tokenResponse.access_token;
             console.log("Access Token:", accessToken);
 
-            // Fetch Step Count for correct time range (Today)
-            const midnight = new Date();
-            midnight.setHours(0,0,0,0);
-            const startTimeMillis = midnight.getTime();
-            const endTimeMillis = Date.now();
+            // 1. Check if the user actually has Google Fit Data Sources
+            // This helps identify if they've ever used the app with this account.
+            const dsResponse = await axios.get(
+                'https://www.googleapis.com/fitness/v1/users/me/dataSources',
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            
+            const hasStepSource = dsResponse.data.dataSource.some(ds => 
+                ds.dataType.name === "com.google.step_count.delta"
+            );
+
+            if (!hasStepSource) {
+                 alert("Account Error: It looks like this Google account hasn't logged into the Google Fit app on a mobile device yet, or no activity data exists.");
+                 return;
+            }
+
+            // 2. Fetch Step Count for Today (Start of day to Now)
+            const now = new Date();
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const startTimeMillis = startOfDay.getTime();
+            const endTimeMillis = now.getTime();
 
             const response = await axios.post(
                 'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
                 {
                     aggregateBy: [{
-                        dataTypeName: "com.google.step_count.delta"
-                        // removed specific dataSourceId to allow Google to use best available merged stream
+                        dataTypeName: "com.google.step_count.delta",
+                        dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
                     }],
-                    bucketByTime: { durationMillis: 86400000 }, // 1 day bucket
+                    bucketByTime: { durationMillis: 86400000 }, // 24h bucket ensures we get the daily total
                     startTimeMillis,
                     endTimeMillis
                 },
@@ -116,64 +132,66 @@ const Dashboard = () => {
                 }
             );
             
-            console.log("Google Fit Response:", response.data);
+            console.log("Google Fit Aggregate Response:", response.data);
 
-            // Parse Google Fit Response
-            const bucket = response.data.bucket[0];
+            // Parse steps from the bucket
             let totalSteps = 0;
-            
-            if (bucket && bucket.dataset) {
-                // Sum up all data points in the bucket (sometimes multiple segments returned)
-                bucket.dataset.forEach(ds => {
-                    ds.point.forEach(p => {
-                         if (p.value && p.value.length > 0) {
-                             totalSteps += p.value[0].intVal;
-                         }
-                    });
+            if (response.data.bucket && response.data.bucket.length > 0) {
+                response.data.bucket.forEach(bucket => {
+                    if (bucket.dataset) {
+                        bucket.dataset.forEach(ds => {
+                            ds.point.forEach(p => {
+                                if (p.value && p.value.length > 0) {
+                                    totalSteps += p.value[0].intVal;
+                                }
+                            });
+                        });
+                    }
                 });
             }
 
-            console.log("Total Parsed Steps:", totalSteps);
+            console.log("Total Accurate Steps:", totalSteps);
             
-            // Safety Check: Prevent overwriting progress with 0 (e.g. wrong account selected)
-            if (totalSteps === 0 && steps > 100) {
+            // Safety Check: Prevent accidental overwrites if cloud hasn't synced yet
+            if (totalSteps === 0 && steps > 0) {
                  const confirmOverwrite = window.confirm(
-                     `Google Fit reported 0 steps, but you currently have ${steps}.\n\n` +
-                     `This usually happens if you selected the wrong Google Account or if your phone hasn't synced to the cloud yet.\n\n` +
-                     `Do you want to REPLACE your ${steps} steps with 0?`
+                     `Google Fit is reporting 0 steps for today.\n\n` +
+                     `If you have actually walked today, please open the Google Fit app on your phone and "Pull down to refresh" to sync your phone to the Google Cloud.\n\n` +
+                     `Do you want to reset your progress to 0?`
                  );
-                 if (!confirmOverwrite) {
-                     return; // User cancelled, do not update backend
-                 }
+                 if (!confirmOverwrite) return;
             }
 
-            // 1. Update UI Immediate
+            // 3. Update State & Backend
             setSteps(totalSteps);
 
-            // 2. Update Local Storage & Current User State
             if (currentUser) {
                 const updatedUser = { ...currentUser, steps: totalSteps };
                 setCurrentUser(updatedUser);
-                localStorage.setItem('user', JSON.stringify(updatedUser)); // Persist locally
+                localStorage.setItem('user', JSON.stringify(updatedUser));
+                updateBackendSteps(totalSteps);
             }
-
-            // 3. Update Backend (for Leaderboard)
-            updateBackendSteps(totalSteps);
             
             const timeStr = new Date().toLocaleTimeString();
-
-            if (totalSteps === 0) {
-                 alert(`Synced at ${timeStr}\n\nGoogle Fit returned 0 steps.\n\nTip: Open the Google Fit app on your phone and pull down to refresh/sync it to the cloud first.`);
+            if (totalSteps > 0) {
+                alert(`Successfully Synced!\n\nSteps: ${totalSteps}\nTime: ${timeStr}\n\nNote: If this is lower than your phone, please "Pull Down to Refresh" inside your mobile Google Fit app.`);
             } else {
-                 alert(`Synced at ${timeStr}\n\nCount: ${totalSteps} steps.\n\nNote: If this doesn't match your phone, open the Google Fit app on your mobile and force a sync (pull down). APIs can take a few minutes to update.`);
+                alert(`Sync Complete.\n\n0 steps found for today.\n\nIf you have steps on your phone, ensure you are logged into the same account and have synced the mobile app to the cloud.`);
             }
 
         } catch (error) {
-            console.error("Error fetching Google Fit data:", error);
-            alert("Failed to fetch steps from Google Fit.");
+            console.error("Critical Sync Error:", error);
+            if (error.response?.status === 403) {
+                alert("Permission Denied: Ensure you haven't restricted access to physical activity data in the Google Consent Screen.");
+            } else {
+                alert("Failed to connect to Google Fit. Please try again or check your internet connection.");
+            }
         }
     },
-    onError: error => console.error("Login Failed:", error),
+    onError: error => {
+        console.error("OAuth Error:", error);
+        alert("Authentication failed. Please try again.");
+    },
     scope: 'https://www.googleapis.com/auth/fitness.activity.read'
   });
 
