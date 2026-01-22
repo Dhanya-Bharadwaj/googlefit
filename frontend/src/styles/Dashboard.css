@@ -431,6 +431,66 @@
     position: relative;
 }
 
+/* Re-authorization Banner */
+.reauth-banner {
+    grid-column: 1 / -1;
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border: 1px solid #f59e0b;
+    border-radius: 12px;
+    padding: 16px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 6px -1px rgb(245 158 11 / 0.2);
+}
+
+.reauth-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.reauth-text {
+    flex: 1;
+    min-width: 250px;
+}
+
+.reauth-text strong {
+    display: block;
+    color: #92400e;
+    font-size: 1rem;
+    margin-bottom: 4px;
+}
+
+.reauth-text p {
+    color: #a16207;
+    font-size: 0.85rem;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.reauth-btn {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.reauth-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+}
+
+.reauth-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
 /* Mobile Responsive */
 @media (max-width: 900px) {
     .dashboard-content {
@@ -440,5 +500,14 @@
     
     .stats-card {
         position: static;
+    }
+    
+    .reauth-content {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .reauth-text {
+        min-width: unset;
     }
 }

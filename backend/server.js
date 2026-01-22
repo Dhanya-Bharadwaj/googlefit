@@ -1,3 +1,5 @@
+require('dotenv').config(); // Load environment variables from .env file
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -13,7 +15,8 @@ const DB_FILE = path.join(__dirname, 'users.json');
 // Google OAuth credentials - set these in environment variables
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '771043035883-pd8m6muu3es7dcfn57so3onot8rk197h.apps.googleusercontent.com';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || ''; // You need to set this!
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'postmessage'; // For popup flow
+// CRITICAL: For @react-oauth/google with auth-code flow, use 'postmessage' as redirect_uri
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'postmessage';
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -58,6 +61,7 @@ const refreshAccessToken = async (refreshToken) => {
 };
 
 // Google Auth Callback - Exchange auth code for tokens (including refresh token)
+// CRITICAL: This endpoint properly handles refresh tokens for offline access
 router.post('/google-auth-callback', async (req, res) => {
   const { code } = req.body;
   
@@ -72,6 +76,7 @@ router.post('/google-auth-callback', async (req, res) => {
   
   try {
     // Exchange authorization code for tokens
+    // Using 'postmessage' as redirect_uri for @react-oauth/google popup flow
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
       code,
       client_id: GOOGLE_CLIENT_ID,
@@ -81,7 +86,10 @@ router.post('/google-auth-callback', async (req, res) => {
     });
     
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
-    console.log('Token exchange successful. Refresh token received:', !!refresh_token);
+    console.log('=== TOKEN EXCHANGE SUCCESS ===');
+    console.log('Access token received:', !!access_token);
+    console.log('Refresh token received:', !!refresh_token);
+    console.log('Expires in:', expires_in, 'seconds');
     
     // Get user info
     const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -112,19 +120,38 @@ router.post('/google-auth-callback', async (req, res) => {
     saveUsers(users);
     
     // Save to Firebase with refresh token (for sync-all feature)
+    // CRITICAL: Only update refresh token if we received a new one (never overwrite with null)
     if (db) {
       try {
-        await db.collection('users').doc(cleanEmail).set({
+        // First, get existing user data to preserve refresh token if not received
+        const existingDoc = await db.collection('users').doc(cleanEmail).get();
+        const existingData = existingDoc.exists ? existingDoc.data() : {};
+        
+        // Build update object - NEVER overwrite refresh token with null/undefined
+        const updateData = {
           name: googleUser.name,
           email: cleanEmail,
           picture: googleUser.picture,
-          steps: user.steps || 0,
-          refreshToken: refresh_token || null, // Store refresh token!
+          steps: user.steps || existingData.steps || 0,
           accessToken: access_token,
           tokenExpiry: Date.now() + (expires_in * 1000),
-          lastLogin: new Date().toISOString()
-        }, { merge: true });
-        console.log(`[Firebase] User saved with refresh token: ${cleanEmail}`);
+          lastLogin: new Date().toISOString(),
+          googleFitEnabled: true
+        };
+        
+        // CRITICAL: Only update refreshToken if we actually received one
+        // This prevents overwriting stored refresh token with null on subsequent logins
+        if (refresh_token) {
+          updateData.refreshToken = refresh_token;
+          console.log(`[Firebase] NEW refresh token stored for ${cleanEmail}`);
+        } else if (existingData.refreshToken) {
+          console.log(`[Firebase] Keeping existing refresh token for ${cleanEmail}`);
+        } else {
+          console.warn(`[Firebase] WARNING: No refresh token available for ${cleanEmail}`);
+        }
+        
+        await db.collection('users').doc(cleanEmail).set(updateData, { merge: true });
+        console.log(`[Firebase] User saved: ${cleanEmail}`);
       } catch (e) {
         console.error('Firebase save error:', e);
       }
@@ -138,7 +165,8 @@ router.post('/google-auth-callback', async (req, res) => {
         picture: googleUser.picture,
         steps: user.steps || 0
       },
-      accessToken: access_token
+      accessToken: access_token,
+      hasRefreshToken: !!refresh_token // Let frontend know if refresh token was stored
     });
     
   } catch (error) {
@@ -488,9 +516,14 @@ router.get('/firebase/user-steps/:email', async (req, res) => {
   }
 });
 
-// Sync ALL users' steps using their stored tokens (with refresh token support)
+// Sync ALL users' steps using their stored REFRESH TOKENS (background sync - no user login needed)
+// This is the CORRECT way to fetch steps for offline users
 router.post('/firebase/sync-all-steps', async (req, res) => {
   if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  if (!GOOGLE_CLIENT_SECRET) {
+    return res.status(500).json({ message: 'GOOGLE_CLIENT_SECRET not configured - cannot refresh tokens' });
+  }
   
   const results = { success: [], failed: [], skipped: [] };
   
@@ -498,69 +531,42 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
   async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis) {
     let totalSteps = 0;
     
-    // Try estimated_steps first
-    try {
-      const response = await axios.post(
-        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-        {
-          aggregateBy: [{
-            dataTypeName: "com.google.step_count.delta",
-            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
-          }],
-          bucketByTime: { durationMillis: 86400000 },
-          startTimeMillis,
-          endTimeMillis
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      if (response.data.bucket && response.data.bucket.length > 0) {
-        response.data.bucket.forEach(bucket => {
-          if (bucket.dataset) {
-            bucket.dataset.forEach(ds => {
+    // Try with step_count.delta (most reliable for aggregated steps)
+    const response = await axios.post(
+      'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+      {
+        aggregateBy: [{
+          dataTypeName: "com.google.step_count.delta"
+        }],
+        bucketByTime: { durationMillis: 86400000 }, // 1 day buckets
+        startTimeMillis,
+        endTimeMillis
+      },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    
+    if (response.data.bucket && response.data.bucket.length > 0) {
+      response.data.bucket.forEach(bucket => {
+        if (bucket.dataset) {
+          bucket.dataset.forEach(ds => {
+            if (ds.point) {
               ds.point.forEach(p => {
                 if (p.value && p.value.length > 0) {
-                  totalSteps += p.value[0].intVal;
+                  totalSteps += p.value[0].intVal || 0;
                 }
               });
-            });
-          }
-        });
-      }
-      return totalSteps;
-    } catch (e) {
-      // Try generic method
-      const response2 = await axios.post(
-        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-        {
-          aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
-          bucketByTime: { durationMillis: 86400000 },
-          startTimeMillis,
-          endTimeMillis
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      if (response2.data.bucket && response2.data.bucket.length > 0) {
-        response2.data.bucket.forEach(bucket => {
-          if (bucket.dataset) {
-            bucket.dataset.forEach(ds => {
-              ds.point.forEach(p => {
-                if (p.value && p.value.length > 0) {
-                  totalSteps += p.value[0].intVal;
-                }
-              });
-            });
-          }
-        });
-      }
-      return totalSteps;
+            }
+          });
+        }
+      });
     }
+    return totalSteps;
   }
   
   try {
-    // Get all users with tokens
+    // Get all users from Firebase
     const snapshot = await db.collection('users').get();
+    console.log(`[Sync-All] Processing ${snapshot.docs.length} users...`);
     
     for (const doc of snapshot.docs) {
       const userData = doc.data();
@@ -568,65 +574,60 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
       let accessToken = userData.accessToken;
       const refreshToken = userData.refreshToken;
       
-      if (!accessToken && !refreshToken) {
-        results.skipped.push({ email: userEmail, reason: 'No tokens stored' });
+      // CRITICAL: Prioritize refresh token - this enables offline sync
+      if (!refreshToken) {
+        if (!accessToken) {
+          results.skipped.push({ email: userEmail, reason: 'No tokens stored - user needs to login with Google' });
+        } else {
+          results.skipped.push({ email: userEmail, reason: 'No refresh token - user needs to re-login to enable offline sync' });
+        }
         continue;
       }
       
       try {
+        // Calculate time range (today, using UTC to avoid timezone issues)
         const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        // Start of day in user's likely timezone (IST = UTC+5:30)
+        const startOfDay = new Date(now);
+        startOfDay.setHours(0, 0, 0, 0);
         const startTimeMillis = startOfDay.getTime();
-        const endTimeMillis = now.getTime() + 60000;
+        const endTimeMillis = now.getTime();
         
         let totalSteps = 0;
         let tokenRefreshed = false;
+        let usedToken = accessToken;
         
-        // Try with current access token first
-        if (accessToken) {
-          try {
-            totalSteps = await fetchStepsWithToken(accessToken, startTimeMillis, endTimeMillis);
-          } catch (tokenError) {
-            // If 401 (expired), try refreshing
-            if (tokenError.response?.status === 401 && refreshToken) {
-              console.log(`[Sync-All] Token expired for ${userEmail}, refreshing...`);
-              const newToken = await refreshAccessToken(refreshToken);
-              if (newToken) {
-                accessToken = newToken;
-                tokenRefreshed = true;
-                // Update stored access token
-                await db.collection('users').doc(userEmail).set({
-                  accessToken: newToken
-                }, { merge: true });
-                totalSteps = await fetchStepsWithToken(newToken, startTimeMillis, endTimeMillis);
-              } else {
-                throw new Error('Failed to refresh token');
-              }
-            } else {
-              throw tokenError;
-            }
-          }
-        } else if (refreshToken) {
-          // No access token but have refresh token
-          console.log(`[Sync-All] No access token for ${userEmail}, using refresh token...`);
-          const newToken = await refreshAccessToken(refreshToken);
-          if (newToken) {
-            accessToken = newToken;
-            tokenRefreshed = true;
-            await db.collection('users').doc(userEmail).set({
-              accessToken: newToken
-            }, { merge: true });
-            totalSteps = await fetchStepsWithToken(newToken, startTimeMillis, endTimeMillis);
-          } else {
-            throw new Error('Failed to refresh token');
-          }
+        // ALWAYS try to refresh token first for reliability (access tokens expire in 1 hour)
+        // This ensures we can sync even if user hasn't opened the app for days
+        console.log(`[Sync-All] Refreshing token for ${userEmail}...`);
+        const newAccessToken = await refreshAccessToken(refreshToken);
+        
+        if (newAccessToken) {
+          usedToken = newAccessToken;
+          tokenRefreshed = true;
+          
+          // Update stored access token in Firebase
+          await db.collection('users').doc(userEmail).set({
+            accessToken: newAccessToken,
+            tokenExpiry: Date.now() + (3600 * 1000) // 1 hour from now
+          }, { merge: true });
+          
+          console.log(`[Sync-All] Token refreshed for ${userEmail}`);
+        } else if (accessToken) {
+          // Refresh failed but we have an access token, try it anyway
+          console.log(`[Sync-All] Refresh failed for ${userEmail}, trying existing access token...`);
+          usedToken = accessToken;
+        } else {
+          throw new Error('Token refresh failed and no access token available');
         }
+        
+        // Fetch steps using the token
+        totalSteps = await fetchStepsWithToken(usedToken, startTimeMillis, endTimeMillis);
         
         // Update user's steps in Firebase
         await db.collection('users').doc(userEmail).set({
           steps: totalSteps,
-          lastSynced: new Date().toISOString(),
-          isTestUser: true
+          lastSynced: new Date().toISOString()
         }, { merge: true });
         
         results.success.push({ 
@@ -634,25 +635,76 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
           steps: totalSteps,
           tokenRefreshed 
         });
-        console.log(`[Sync-All] ${userEmail}: ${totalSteps} steps${tokenRefreshed ? ' (token refreshed)' : ''}`);
+        console.log(`[Sync-All] ✅ ${userEmail}: ${totalSteps} steps${tokenRefreshed ? ' (token refreshed)' : ''}`);
         
       } catch (fetchError) {
-        console.error(`[Sync-All] Failed for ${userEmail}:`, fetchError.message);
+        console.error(`[Sync-All] ❌ Failed for ${userEmail}:`, fetchError.response?.data || fetchError.message);
+        
+        let reason = fetchError.message;
+        if (fetchError.response?.status === 401) {
+          reason = 'Refresh token revoked or expired - user needs to re-login';
+          // Mark this user as needing re-authentication
+          await db.collection('users').doc(userEmail).set({
+            tokenStatus: 'expired',
+            lastSyncError: reason,
+            lastSyncAttempt: new Date().toISOString()
+          }, { merge: true });
+        } else if (fetchError.response?.status === 403) {
+          reason = 'Access denied - user may have revoked fitness permissions';
+        }
+        
         results.failed.push({ 
           email: userEmail, 
-          reason: fetchError.response?.status === 401 ? 'Token expired and refresh failed' : fetchError.message 
+          reason 
         });
       }
     }
     
+    console.log(`[Sync-All] Complete: ${results.success.length} success, ${results.failed.length} failed, ${results.skipped.length} skipped`);
+    
     res.json({
       message: `Synced ${results.success.length} users, ${results.failed.length} failed, ${results.skipped.length} skipped`,
-      results
+      results,
+      timestamp: new Date().toISOString()
     });
     
   } catch (error) {
     console.error('Sync-all error:', error);
     res.status(500).json({ message: 'Sync-all failed', error: error.message });
+  }
+});
+
+// Get status of all users' refresh tokens (for admin dashboard)
+router.get('/firebase/token-status', async (req, res) => {
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  
+  try {
+    const snapshot = await db.collection('users').get();
+    const users = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        email: data.email,
+        name: data.name,
+        hasRefreshToken: !!data.refreshToken,
+        hasAccessToken: !!data.accessToken,
+        lastLogin: data.lastLogin,
+        lastSynced: data.lastSynced,
+        tokenStatus: data.tokenStatus || (data.refreshToken ? 'valid' : 'missing'),
+        googleFitEnabled: data.googleFitEnabled || false
+      };
+    });
+    
+    const summary = {
+      total: users.length,
+      withRefreshToken: users.filter(u => u.hasRefreshToken).length,
+      withoutRefreshToken: users.filter(u => !u.hasRefreshToken).length,
+      canSyncOffline: users.filter(u => u.hasRefreshToken).length
+    };
+    
+    res.json({ users, summary });
+  } catch (error) {
+    console.error('Token status error:', error);
+    res.status(500).json({ message: 'Failed to get token status' });
   }
 });
 

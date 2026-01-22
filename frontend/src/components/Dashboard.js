@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Activity, Trophy, RefreshCw, LogOut, Crown } from 'lucide-react';
+import { Activity, Trophy, RefreshCw, LogOut, Crown, AlertTriangle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useGoogleLogin } from '@react-oauth/google';
 import API_URL from '../config/api';
 import IntroAnimation from './IntroAnimation';
 import '../styles/Dashboard.css';
@@ -15,6 +16,8 @@ const Dashboard = () => {
   const [lastSyncTime, setLastSyncTime] = useState(localStorage.getItem('last_sync_time') || '--');
   const [topUser, setTopUser] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [hasRefreshToken, setHasRefreshToken] = useState(true); // Assume true until checked
+  const [isReauthorizing, setIsReauthorizing] = useState(false);
 
   const fetchLeaderboard = useCallback(async () => {
     try {
@@ -32,6 +35,21 @@ const Dashboard = () => {
     }
   }, []);
 
+  // Check if current user has a refresh token
+  const checkRefreshTokenStatus = useCallback(async (email) => {
+    try {
+      const response = await fetch(`${API_URL}/api/firebase/token-status`);
+      const data = await response.json();
+      const userStatus = data.users?.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (userStatus) {
+        setHasRefreshToken(userStatus.hasRefreshToken);
+        console.log(`[Token Check] ${email}: hasRefreshToken=${userStatus.hasRefreshToken}`);
+      }
+    } catch (e) {
+      console.error('Token status check error:', e);
+    }
+  }, []);
+
   useEffect(() => {
     // Load user from local storage (set during login)
     const storedUser = localStorage.getItem('user');
@@ -44,6 +62,9 @@ const Dashboard = () => {
     // Instead of trusting local storage completely, let's trust the backend for steps
     // We kept the rest of the user object for name/email
     setCurrentUser(parsedUser);
+
+    // Check if user has refresh token for offline sync
+    checkRefreshTokenStatus(parsedUser.email);
 
     // Initial Leaderboard Load
     fetchLeaderboard().then(() => {
@@ -73,7 +94,7 @@ const Dashboard = () => {
     };
     fetchUserSteps();
 
-  }, [navigate, fetchLeaderboard]); 
+  }, [navigate, fetchLeaderboard, checkRefreshTokenStatus]); 
 
   // Sync ALL employees' steps using tokens stored in backend
   const syncAllEmployeesSteps = async () => {
@@ -128,18 +149,29 @@ const Dashboard = () => {
       message += `⏭️ Skipped: ${data.results?.skipped?.length || 0} users\n\n`;
       
       if (data.results?.success?.length > 0) {
-        message += `Synced Users:\n`;
+        message += `✅ Synced Users:\n`;
         data.results.success.forEach(r => {
-          message += `• ${r.email}: ${r.steps.toLocaleString()} steps\n`;
+          message += `• ${r.email}: ${r.steps.toLocaleString()} steps${r.tokenRefreshed ? ' 🔄' : ''}\n`;
         });
       }
       
       if (data.results?.failed?.length > 0) {
-        message += `\nFailed (token expired - need to re-login):\n`;
+        message += `\n❌ Failed (need to re-login with Google):\n`;
         data.results.failed.forEach(r => {
-          message += `• ${r.email}\n`;
+          message += `• ${r.email}: ${r.reason || 'Token expired'}\n`;
         });
       }
+      
+      if (data.results?.skipped?.length > 0) {
+        message += `\n⏭️ Skipped (no refresh token):\n`;
+        data.results.skipped.forEach(r => {
+          message += `• ${r.email}: ${r.reason}\n`;
+        });
+      }
+      
+      message += `\n━━━━━━━━━━━━━━━━━━\n`;
+      message += `🔄 = Token was refreshed (user was offline)\n`;
+      message += `💡 Users with refresh tokens can be synced anytime!`;
       
       alert(message);
       
@@ -154,6 +186,61 @@ const Dashboard = () => {
   const initiateSync = () => {
     syncAllEmployeesSteps(); // Sync ALL employees, not just the current user
   };
+
+  // Re-authorize with Google to get a refresh token (for users who logged in before this feature)
+  const handleReauthorize = useGoogleLogin({
+    flow: 'auth-code',
+    scope: 'openid email profile https://www.googleapis.com/auth/fitness.activity.read',
+    access_type: 'offline',
+    prompt: 'consent', // Force consent to ensure we get a refresh token
+    onSuccess: async (codeResponse) => {
+      try {
+        setIsReauthorizing(true);
+        console.log('Re-authorization code received');
+        
+        const backendResponse = await fetch(`${API_URL}/api/google-auth-callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: codeResponse.code })
+        });
+        
+        const backendData = await backendResponse.json();
+        
+        if (!backendResponse.ok) {
+          throw new Error(backendData.message || 'Re-authorization failed');
+        }
+        
+        // Update local storage with new token
+        if (backendData.accessToken) {
+          localStorage.setItem('google_access_token', backendData.accessToken);
+        }
+        
+        // Update current user
+        const user = backendData.user;
+        localStorage.setItem('user', JSON.stringify(user));
+        setCurrentUser(user);
+        
+        // Mark as having refresh token now
+        setHasRefreshToken(backendData.hasRefreshToken);
+        
+        alert(`✅ Re-authorization successful!\n\nYour account now has offline sync enabled. Your steps will be synced automatically even when you're not logged in.`);
+        
+        // Trigger a sync immediately
+        syncAllEmployeesSteps();
+        
+      } catch (error) {
+        console.error('Re-authorization error:', error);
+        alert('Re-authorization failed: ' + error.message);
+      } finally {
+        setIsReauthorizing(false);
+      }
+    },
+    onError: (error) => {
+      console.error('Re-authorization error:', error);
+      alert('Re-authorization failed: ' + (error.description || error.error || 'Unknown error'));
+      setIsReauthorizing(false);
+    }
+  });
 
   const handleLogout = () => {
     localStorage.removeItem('user');
@@ -185,6 +272,26 @@ const Dashboard = () => {
       </header>
 
       <main className="dashboard-content">
+        {/* Reauthorization Banner for users without refresh tokens */}
+        {!hasRefreshToken && (
+          <div className="reauth-banner">
+            <div className="reauth-content">
+              <AlertTriangle size={24} color="#f59e0b" />
+              <div className="reauth-text">
+                <strong>Offline Sync Not Enabled</strong>
+                <p>Your account was created before offline sync was available. Click below to enable automatic step syncing even when you're not logged in.</p>
+              </div>
+              <button 
+                className="reauth-btn" 
+                onClick={() => handleReauthorize()}
+                disabled={isReauthorizing}
+              >
+                {isReauthorizing ? 'Authorizing...' : 'Enable Offline Sync'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Left Panel: Personal Stats */}
         <div 
             className="stats-card"
