@@ -511,30 +511,15 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
   const results = { success: [], failed: [], skipped: [] };
   
   // Helper function to fetch steps with a given token
-  // Uses Google Fit Aggregate API for accurate step count
+  // Tries MULTIPLE data sources and returns the HIGHEST value for accuracy
   async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis, userEmail) {
-    let totalSteps = 0;
+    const stepCounts = [];
     
     console.log(`[FetchSteps] ${userEmail}: Fetching from ${new Date(startTimeMillis).toISOString()} to ${new Date(endTimeMillis).toISOString()}`);
     
-    try {
-      // Method 1: Use aggregate API with step_count.delta (merged from all sources)
-      const response = await axios.post(
-        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-        {
-          aggregateBy: [{
-            dataTypeName: "com.google.step_count.delta",
-            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
-          }],
-          bucketByTime: { durationMillis: endTimeMillis - startTimeMillis }, // Single bucket for entire range
-          startTimeMillis,
-          endTimeMillis
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      console.log(`[FetchSteps] ${userEmail}: Got ${response.data.bucket?.length || 0} buckets`);
-      
+    // Helper to extract steps from response
+    const extractSteps = (response) => {
+      let steps = 0;
       if (response.data.bucket && response.data.bucket.length > 0) {
         response.data.bucket.forEach(bucket => {
           if (bucket.dataset) {
@@ -542,9 +527,7 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
               if (ds.point) {
                 ds.point.forEach(p => {
                   if (p.value && p.value.length > 0) {
-                    const stepVal = p.value[0].intVal || 0;
-                    totalSteps += stepVal;
-                    console.log(`[FetchSteps] ${userEmail}: Found ${stepVal} steps in point`);
+                    steps += p.value[0].intVal || 0;
                   }
                 });
               }
@@ -552,11 +535,13 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
           }
         });
       }
-      
-      // If no steps found with specific source, try without dataSourceId
-      if (totalSteps === 0) {
-        console.log(`[FetchSteps] ${userEmail}: No steps with estimated_steps, trying generic delta...`);
-        const fallbackResponse = await axios.post(
+      return steps;
+    };
+    
+    try {
+      // Method 1: Query WITHOUT dataSourceId (gets merged data from ALL sources - most accurate)
+      try {
+        const mergedResponse = await axios.post(
           'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
           {
             aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
@@ -566,23 +551,55 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
           },
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        
-        if (fallbackResponse.data.bucket && fallbackResponse.data.bucket.length > 0) {
-          fallbackResponse.data.bucket.forEach(bucket => {
-            if (bucket.dataset) {
-              bucket.dataset.forEach(ds => {
-                if (ds.point) {
-                  ds.point.forEach(p => {
-                    if (p.value && p.value.length > 0) {
-                      totalSteps += p.value[0].intVal || 0;
-                    }
-                  });
-                }
-              });
-            }
-          });
-        }
-        console.log(`[FetchSteps] ${userEmail}: Generic delta returned ${totalSteps} steps`);
+        const mergedSteps = extractSteps(mergedResponse);
+        stepCounts.push({ source: 'merged', steps: mergedSteps });
+        console.log(`[FetchSteps] ${userEmail}: Merged sources = ${mergedSteps} steps`);
+      } catch (e) {
+        console.log(`[FetchSteps] ${userEmail}: Merged query failed:`, e.message);
+      }
+      
+      // Method 2: Try estimated_steps (Google's calculated estimate)
+      try {
+        const estimatedResponse = await axios.post(
+          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+          {
+            aggregateBy: [{
+              dataTypeName: "com.google.step_count.delta",
+              dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+            }],
+            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
+            startTimeMillis,
+            endTimeMillis
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const estimatedSteps = extractSteps(estimatedResponse);
+        stepCounts.push({ source: 'estimated_steps', steps: estimatedSteps });
+        console.log(`[FetchSteps] ${userEmail}: Estimated steps = ${estimatedSteps} steps`);
+      } catch (e) {
+        console.log(`[FetchSteps] ${userEmail}: Estimated query failed:`, e.message);
+      }
+      
+      // Method 3: Try merge_step_deltas (another merged source)
+      try {
+        const mergeResponse = await axios.post(
+          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+          {
+            aggregateBy: [{
+              dataTypeName: "com.google.step_count.delta",
+              dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:merge_step_deltas"
+            }],
+            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
+            startTimeMillis,
+            endTimeMillis
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const mergeSteps = extractSteps(mergeResponse);
+        stepCounts.push({ source: 'merge_step_deltas', steps: mergeSteps });
+        console.log(`[FetchSteps] ${userEmail}: Merge deltas = ${mergeSteps} steps`);
+      } catch (e) {
+        console.log(`[FetchSteps] ${userEmail}: Merge deltas query failed:`, e.message);
       }
       
     } catch (fetchError) {
@@ -590,8 +607,14 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
       throw fetchError;
     }
     
-    console.log(`[FetchSteps] ${userEmail}: TOTAL = ${totalSteps} steps`);
-    return totalSteps;
+    // Return the HIGHEST step count from all sources (most accurate)
+    const maxSteps = stepCounts.length > 0 ? Math.max(...stepCounts.map(s => s.steps)) : 0;
+    const bestSource = stepCounts.find(s => s.steps === maxSteps);
+    
+    console.log(`[FetchSteps] ${userEmail}: All sources: ${JSON.stringify(stepCounts)}`);
+    console.log(`[FetchSteps] ${userEmail}: BEST = ${maxSteps} steps (from ${bestSource?.source || 'none'})`);
+    
+    return maxSteps;
   }
   
   try {
