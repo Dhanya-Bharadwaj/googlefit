@@ -511,35 +511,86 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
   const results = { success: [], failed: [], skipped: [] };
   
   // Helper function to fetch steps with a given token
-  async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis) {
+  // Uses Google Fit Aggregate API for accurate step count
+  async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis, userEmail) {
     let totalSteps = 0;
     
-    const response = await axios.post(
-      'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-      {
-        aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
-        bucketByTime: { durationMillis: 86400000 },
-        startTimeMillis,
-        endTimeMillis
-      },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+    console.log(`[FetchSteps] ${userEmail}: Fetching from ${new Date(startTimeMillis).toISOString()} to ${new Date(endTimeMillis).toISOString()}`);
     
-    if (response.data.bucket && response.data.bucket.length > 0) {
-      response.data.bucket.forEach(bucket => {
-        if (bucket.dataset) {
-          bucket.dataset.forEach(ds => {
-            if (ds.point) {
-              ds.point.forEach(p => {
-                if (p.value && p.value.length > 0) {
-                  totalSteps += p.value[0].intVal || 0;
+    try {
+      // Method 1: Use aggregate API with step_count.delta (merged from all sources)
+      const response = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{
+            dataTypeName: "com.google.step_count.delta",
+            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+          }],
+          bucketByTime: { durationMillis: endTimeMillis - startTimeMillis }, // Single bucket for entire range
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      console.log(`[FetchSteps] ${userEmail}: Got ${response.data.bucket?.length || 0} buckets`);
+      
+      if (response.data.bucket && response.data.bucket.length > 0) {
+        response.data.bucket.forEach(bucket => {
+          if (bucket.dataset) {
+            bucket.dataset.forEach(ds => {
+              if (ds.point) {
+                ds.point.forEach(p => {
+                  if (p.value && p.value.length > 0) {
+                    const stepVal = p.value[0].intVal || 0;
+                    totalSteps += stepVal;
+                    console.log(`[FetchSteps] ${userEmail}: Found ${stepVal} steps in point`);
+                  }
+                });
+              }
+            });
+          }
+        });
+      }
+      
+      // If no steps found with specific source, try without dataSourceId
+      if (totalSteps === 0) {
+        console.log(`[FetchSteps] ${userEmail}: No steps with estimated_steps, trying generic delta...`);
+        const fallbackResponse = await axios.post(
+          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+          {
+            aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
+            startTimeMillis,
+            endTimeMillis
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        
+        if (fallbackResponse.data.bucket && fallbackResponse.data.bucket.length > 0) {
+          fallbackResponse.data.bucket.forEach(bucket => {
+            if (bucket.dataset) {
+              bucket.dataset.forEach(ds => {
+                if (ds.point) {
+                  ds.point.forEach(p => {
+                    if (p.value && p.value.length > 0) {
+                      totalSteps += p.value[0].intVal || 0;
+                    }
+                  });
                 }
               });
             }
           });
         }
-      });
+        console.log(`[FetchSteps] ${userEmail}: Generic delta returned ${totalSteps} steps`);
+      }
+      
+    } catch (fetchError) {
+      console.error(`[FetchSteps] ${userEmail}: API Error:`, fetchError.response?.data || fetchError.message);
+      throw fetchError;
     }
+    
+    console.log(`[FetchSteps] ${userEmail}: TOTAL = ${totalSteps} steps`);
     return totalSteps;
   }
   
@@ -564,11 +615,23 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
       }
       
       try {
+        // Calculate time range in IST (Indian Standard Time, UTC+5:30)
+        // This ensures we get "today's" steps in the user's local time
         const now = new Date();
-        const startOfDay = new Date(now);
-        startOfDay.setHours(0, 0, 0, 0);
-        const startTimeMillis = startOfDay.getTime();
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+        
+        // Get current IST time
+        const nowIST = new Date(now.getTime() + IST_OFFSET_MS + (now.getTimezoneOffset() * 60 * 1000));
+        
+        // Calculate start of day in IST (midnight IST)
+        const startOfDayIST = new Date(nowIST);
+        startOfDayIST.setHours(0, 0, 0, 0);
+        
+        // Convert back to UTC milliseconds for the API
+        const startTimeMillis = startOfDayIST.getTime() - IST_OFFSET_MS - (now.getTimezoneOffset() * 60 * 1000);
         const endTimeMillis = now.getTime();
+        
+        console.log(`[Sync-All] ${userEmail}: IST Date = ${nowIST.toISOString().split('T')[0]}, Start = ${new Date(startTimeMillis).toISOString()}, End = ${new Date(endTimeMillis).toISOString()}`);
         
         let totalSteps = 0;
         let tokenRefreshed = false;
@@ -595,7 +658,7 @@ app.post('/api/firebase/sync-all-steps', async (req, res) => {
           throw new Error('Token refresh failed and no access token available');
         }
         
-        totalSteps = await fetchStepsWithToken(usedToken, startTimeMillis, endTimeMillis);
+        totalSteps = await fetchStepsWithToken(usedToken, startTimeMillis, endTimeMillis, userEmail);
         
         await db.collection('users').doc(userEmail).set({
           steps: totalSteps,
