@@ -24,14 +24,16 @@ const Dashboard = () => {
       const response = await fetch(`${API_URL}/api/firebase/leaderboard`);
       const data = await response.json();
       setLeaderboard(data);
-      
+
       // Find top user (highest steps)
       if (data && data.length > 0) {
         const top = data.reduce((max, user) => (user.steps > max.steps ? user : max), data[0]);
         setTopUser(top);
       }
+      return data; // Return data so callers can use it
     } catch (error) {
       console.error('Error fetching leaderboard:', error);
+      return [];
     }
   }, []);
 
@@ -58,7 +60,7 @@ const Dashboard = () => {
       return;
     }
     const parsedUser = JSON.parse(storedUser);
-    
+
     // Instead of trusting local storage completely, let's trust the backend for steps
     // We kept the rest of the user object for name/email
     setCurrentUser(parsedUser);
@@ -66,40 +68,26 @@ const Dashboard = () => {
     // Check if user has refresh token for offline sync
     checkRefreshTokenStatus(parsedUser.email);
 
-    // Initial Leaderboard Load
-    fetchLeaderboard().then(() => {
-       // After fetching leaderboard, update local 'steps' state from the cloud data if available
-       // fetchLeaderboard sets state 'leaderboard', but React state updates are async, 
-       // so better to fetch specific user doc or re-query for current user here.
-       // For simplicity, we'll just re-query the collection or rely on the next render if we used a listener.
-       // Let's just do a direct read for the user to be sure.
-       // Actually, let's just piggyback on the list logic we just replaced.
-       // Re-implementing the logic inside the promise chain of getDocs would be cleanest but I separated them.
-    });
-
-    // Fetch single user to sync steps immediately
+    // Fetch leaderboard and update current user's steps from fresh cloud data
     const fetchUserSteps = async () => {
-         try {
-            const response = await fetch(`${API_URL}/api/firebase/leaderboard`);
-            const data = await response.json();
-            setLeaderboard(data);
-            
-            const myRecord = data.find(u => u.email === parsedUser.email);
-            if(myRecord) {
-                setSteps(myRecord.steps);
-            } else {
-                setSteps(parsedUser.steps || 0);
-            }
-         } catch (e) { console.error(e); }
+      try {
+        const data = await fetchLeaderboard();
+        const myRecord = data.find(u => u.email?.toLowerCase() === parsedUser.email?.toLowerCase());
+        if (myRecord) {
+          setSteps(myRecord.steps || 0);
+        } else {
+          setSteps(parsedUser.steps || 0);
+        }
+      } catch (e) { console.error(e); }
     };
     fetchUserSteps();
 
-  }, [navigate, fetchLeaderboard, checkRefreshTokenStatus]); 
+  }, [navigate, fetchLeaderboard, checkRefreshTokenStatus]);
 
   // Sync ALL employees' steps using tokens stored in backend
   const syncAllEmployeesSteps = async () => {
     setIsSyncing(true);
-    
+
     try {
       // First, update OUR token in the backend (in case it's newer)
       const accessToken = localStorage.getItem('google_access_token');
@@ -114,67 +102,76 @@ const Dashboard = () => {
           })
         });
       }
-      
+
       // Now call the sync-all endpoint
       const response = await fetch(`${API_URL}/api/firebase/sync-all-steps`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
-      
+
       const data = await response.json();
       console.log("Sync-All Results:", data);
-      
-      // Refresh leaderboard
-      await fetchLeaderboard();
-      
-      // Update local steps if we're in the results
-      if (currentUser && data.results?.success) {
-        const myResult = data.results.success.find(r => r.email.toLowerCase() === currentUser.email.toLowerCase());
-        if (myResult) {
-          setSteps(myResult.steps);
-          const updatedUser = { ...currentUser, steps: myResult.steps };
+
+      // Refresh leaderboard and update current user's steps from fresh data
+      const freshData = await fetchLeaderboard();
+
+      if (currentUser && freshData && freshData.length > 0) {
+        // First, try to get steps from leaderboard (most up-to-date)
+        const myRecord = freshData.find(r => r.email?.toLowerCase() === currentUser.email?.toLowerCase());
+        if (myRecord) {
+          setSteps(myRecord.steps || 0);
+          const updatedUser = { ...currentUser, steps: myRecord.steps || 0 };
           setCurrentUser(updatedUser);
           localStorage.setItem('user', JSON.stringify(updatedUser));
+        } else if (data.results?.success) {
+          // Fallback: get from sync results directly
+          const myResult = data.results.success.find(r => r.email?.toLowerCase() === currentUser.email?.toLowerCase());
+          if (myResult) {
+            setSteps(myResult.steps || 0);
+            const updatedUser = { ...currentUser, steps: myResult.steps || 0 };
+            setCurrentUser(updatedUser);
+            localStorage.setItem('user', JSON.stringify(updatedUser));
+          }
         }
       }
-      
+
       const timeStr = new Date().toLocaleTimeString();
       setLastSyncTime(timeStr);
       localStorage.setItem('last_sync_time', timeStr);
-      
+
       // Build result message
       let message = `📊 SYNC ALL RESULTS\n━━━━━━━━━━━━━━━━━━\n`;
       message += `✅ Success: ${data.results?.success?.length || 0} users\n`;
       message += `❌ Failed: ${data.results?.failed?.length || 0} users\n`;
       message += `⏭️ Skipped: ${data.results?.skipped?.length || 0} users\n\n`;
-      
+
       if (data.results?.success?.length > 0) {
         message += `✅ Synced Users:\n`;
         data.results.success.forEach(r => {
           message += `• ${r.email}: ${r.steps.toLocaleString()} steps${r.tokenRefreshed ? ' 🔄' : ''}\n`;
         });
       }
-      
+
       if (data.results?.failed?.length > 0) {
         message += `\n❌ Failed (need to re-login with Google):\n`;
         data.results.failed.forEach(r => {
           message += `• ${r.email}: ${r.reason || 'Token expired'}\n`;
         });
       }
-      
+
       if (data.results?.skipped?.length > 0) {
         message += `\n⏭️ Skipped (no refresh token):\n`;
         data.results.skipped.forEach(r => {
           message += `• ${r.email}: ${r.reason}\n`;
         });
       }
-      
+
       message += `\n━━━━━━━━━━━━━━━━━━\n`;
       message += `🔄 = Token was refreshed (user was offline)\n`;
       message += `💡 Users with refresh tokens can be synced anytime!`;
-      
+
       alert(message);
-      
+
     } catch (error) {
       console.error("Sync-All Error:", error);
       alert("Failed to sync all employees. Error: " + (error.message || "Unknown"));
@@ -197,37 +194,37 @@ const Dashboard = () => {
       try {
         setIsReauthorizing(true);
         console.log('Re-authorization code received');
-        
+
         const backendResponse = await fetch(`${API_URL}/api/google-auth-callback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code: codeResponse.code })
         });
-        
+
         const backendData = await backendResponse.json();
-        
+
         if (!backendResponse.ok) {
           throw new Error(backendData.message || 'Re-authorization failed');
         }
-        
+
         // Update local storage with new token
         if (backendData.accessToken) {
           localStorage.setItem('google_access_token', backendData.accessToken);
         }
-        
+
         // Update current user
         const user = backendData.user;
         localStorage.setItem('user', JSON.stringify(user));
         setCurrentUser(user);
-        
+
         // Mark as having refresh token now
         setHasRefreshToken(backendData.hasRefreshToken);
-        
+
         alert(`✅ Re-authorization successful!\n\nYour account now has offline sync enabled. Your steps will be synced automatically even when you're not logged in.`);
-        
+
         // Trigger a sync immediately
         syncAllEmployeesSteps();
-        
+
       } catch (error) {
         console.error('Re-authorization error:', error);
         alert('Re-authorization failed: ' + error.message);
@@ -251,11 +248,11 @@ const Dashboard = () => {
   };
 
   if (showIntro) {
-      return <IntroAnimation onComplete={() => {
-        setShowIntro(false);
-        // Clear navigation state so refresh doesn't trigger animation again
-        window.history.replaceState({}, document.title);
-      }} />;
+    return <IntroAnimation onComplete={() => {
+      setShowIntro(false);
+      // Clear navigation state so refresh doesn't trigger animation again
+      window.history.replaceState({}, document.title);
+    }} />;
   }
 
   return (
@@ -281,8 +278,8 @@ const Dashboard = () => {
                 <strong>Offline Sync Not Enabled</strong>
                 <p>Your account was created before offline sync was available. Click below to enable automatic step syncing even when you're not logged in.</p>
               </div>
-              <button 
-                className="reauth-btn" 
+              <button
+                className="reauth-btn"
                 onClick={() => handleReauthorize()}
                 disabled={isReauthorizing}
               >
@@ -293,26 +290,26 @@ const Dashboard = () => {
         )}
 
         {/* Left Panel: Personal Stats */}
-        <div 
-            className="stats-card"
+        <div
+          className="stats-card"
         >
           <h2>Your Activity</h2>
           <div className="step-display">
             <div className="step-circle">
-                 <span className="step-count">{steps.toLocaleString()}</span>
+              <span className="step-count">{steps.toLocaleString()}</span>
             </div>
             <span className="step-label">steps today</span>
           </div>
-          
+
           <button className="sync-btn" onClick={initiateSync} disabled={isSyncing}>
             <RefreshCw size={20} className={isSyncing ? 'spinning' : ''} />
             {isSyncing ? 'Syncing...' : 'Sync with Google Fit'}
           </button>
-          
+
           <p className="sync-note">
             Syncing for: <strong>{currentUser?.email}</strong>
           </p>
-          
+
           {/* Top User Card */}
           {topUser && (
             <div className="top-user-card">
@@ -326,7 +323,7 @@ const Dashboard = () => {
               </div>
             </div>
           )}
-          
+
           <div className="accuracy-tip">
             <h3>Syncing Issues?</h3>
             <ol>
@@ -339,20 +336,20 @@ const Dashboard = () => {
         </div>
 
         {/* Right Panel: Leaderboard */}
-        <div 
-            className="leaderboard-card"
+        <div
+          className="leaderboard-card"
         >
           <div className="leaderboard-header">
             <Trophy color="#facc15" size={24} />
             <h2>Company Leaderboard</h2>
           </div>
-          
+
           {/* All Users Leaderboard */}
           <div className="leaderboard-list">
             {leaderboard.length > 0 ? (
               leaderboard.map((user, index) => (
-                <div 
-                  key={index} 
+                <div
+                  key={index}
                   className={`leaderboard-item ${user.email?.toLowerCase() === currentUser?.email?.toLowerCase() ? 'current-user' : ''}`}
                 >
                   <div className="rank">{index + 1}</div>
@@ -364,7 +361,7 @@ const Dashboard = () => {
                 </div>
               ))
             ) : (
-              <div style={{padding: '20px', textAlign: 'center', color: '#64748b'}}>
+              <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
                 Loading leaderboard...
               </div>
             )}

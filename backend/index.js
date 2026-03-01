@@ -498,223 +498,264 @@ app.get('/api/firebase/token-status', async (req, res) => {
   }
 });
 
+// Sync a SINGLE user's steps using their refresh token
+// This is useful for immediate sync when a user is logged in
+app.post('/api/firebase/sync-user-steps', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+  
+  if (!db) return res.status(503).json({ message: 'Firebase not configured' });
+  if (!GOOGLE_CLIENT_SECRET) return res.status(500).json({ message: 'GOOGLE_CLIENT_SECRET not configured' });
+  
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Helper to extract steps from Google Fit API response
+  const extractStepsFromResponse = (response) => {
+    let steps = 0;
+    if (response.data.bucket && response.data.bucket.length > 0) {
+      response.data.bucket.forEach(bucket => {
+        if (bucket.dataset) {
+          bucket.dataset.forEach(ds => {
+            if (ds.point) {
+              ds.point.forEach(p => {
+                if (p.value && p.value.length > 0) {
+                  steps += p.value[0].intVal || 0;
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+    return steps;
+  };
+
+  // Calculate today's time range in IST (midnight IST to now)
+  const getISTDayRange = () => {
+    const now = new Date();
+    // Convert current UTC time to IST
+    const istNow = new Date(now.getTime() + (330 * 60 * 1000));
+    // Get IST midnight for today
+    const istMidnight = new Date(istNow);
+    istMidnight.setHours(0, 0, 0, 0);
+    // Convert IST midnight back to UTC millis
+    const startTimeMillis = istMidnight.getTime() - (330 * 60 * 1000);
+    const endTimeMillis = now.getTime();
+    return { startTimeMillis, endTimeMillis, istDate: istMidnight.toISOString().split('T')[0] };
+  };
+
+  try {
+    const userDoc = await db.collection('users').doc(cleanEmail).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+    const refreshToken = userData.refreshToken;
+    let accessToken = userData.accessToken;
+
+    if (!refreshToken && !accessToken) {
+      return res.status(400).json({ message: 'No tokens available - user needs to login with Google' });
+    }
+
+    let usedToken = accessToken;
+    let tokenRefreshed = false;
+
+    // Try to refresh token if we have one
+    if (refreshToken) {
+      const newAccessToken = await refreshAccessToken(refreshToken);
+      if (newAccessToken) {
+        usedToken = newAccessToken;
+        tokenRefreshed = true;
+        await db.collection('users').doc(cleanEmail).set({
+          accessToken: newAccessToken,
+          tokenExpiry: Date.now() + (3600 * 1000)
+        }, { merge: true });
+        console.log(`[Sync-User] Token refreshed for ${cleanEmail}`);
+      }
+    }
+
+    if (!usedToken) {
+      return res.status(400).json({ message: 'Failed to get valid access token' });
+    }
+
+    const { startTimeMillis, endTimeMillis, istDate } = getISTDayRange();
+
+    // Only use the main Google Fit step data source for the IST day
+    const response = await axios.post(
+      'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+      {
+        aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+        bucketByTime: { durationMillis: endTimeMillis - startTimeMillis + 1 },
+        startTimeMillis,
+        endTimeMillis
+      },
+      { headers: { Authorization: `Bearer ${usedToken}` } }
+    );
+    const steps = extractStepsFromResponse(response);
+
+    // Update user in Firebase
+    await db.collection('users').doc(cleanEmail).set({
+      steps,
+      lastSynced: new Date().toISOString(),
+      stepSource: 'com.google.step_count.delta',
+      syncDate: istDate
+    }, { merge: true });
+
+    res.json({
+      message: 'Steps synced successfully',
+      email: cleanEmail,
+      steps,
+      source: 'com.google.step_count.delta',
+      tokenRefreshed,
+      syncDate: istDate,
+      timeRange: {
+        start: new Date(startTimeMillis).toISOString(),
+        end: new Date(endTimeMillis).toISOString()
+      }
+    });
+
+  } catch (error) {
+    let reason = error.message;
+    if (error.response?.status === 401) {
+      reason = 'Token expired or revoked - please re-login with Google';
+    } else if (error.response?.status === 403) {
+      reason = 'Access denied - fitness permissions may be revoked';
+    }
+    res.status(500).json({ message: reason, error: error.response?.data || error.message });
+  }
+});
+
 // Sync ALL users' steps using their stored REFRESH TOKENS (background sync)
 app.post('/api/firebase/sync-all-steps', async (req, res) => {
   if (!db) {
     return res.status(503).json({ message: 'Firebase not configured' });
   }
-  
+
   if (!GOOGLE_CLIENT_SECRET) {
     return res.status(500).json({ message: 'GOOGLE_CLIENT_SECRET not configured' });
   }
-  
+
   const results = { success: [], failed: [], skipped: [] };
-  
-  // Helper function to fetch steps with a given token
-  // Tries MULTIPLE data sources and returns the HIGHEST value for accuracy
-  async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis, userEmail) {
-    const stepCounts = [];
-    
-    console.log(`[FetchSteps] ${userEmail}: Fetching from ${new Date(startTimeMillis).toISOString()} to ${new Date(endTimeMillis).toISOString()}`);
-    
-    // Helper to extract steps from response
-    const extractSteps = (response) => {
-      let steps = 0;
-      if (response.data.bucket && response.data.bucket.length > 0) {
-        response.data.bucket.forEach(bucket => {
-          if (bucket.dataset) {
-            bucket.dataset.forEach(ds => {
-              if (ds.point) {
-                ds.point.forEach(p => {
-                  if (p.value && p.value.length > 0) {
-                    steps += p.value[0].intVal || 0;
-                  }
-                });
-              }
-            });
-          }
-        });
-      }
-      return steps;
-    };
-    
-    try {
-      // Method 1: Query WITHOUT dataSourceId (gets merged data from ALL sources - most accurate)
-      try {
-        const mergedResponse = await axios.post(
-          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-          {
-            aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
-            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
-            startTimeMillis,
-            endTimeMillis
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const mergedSteps = extractSteps(mergedResponse);
-        stepCounts.push({ source: 'merged', steps: mergedSteps });
-        console.log(`[FetchSteps] ${userEmail}: Merged sources = ${mergedSteps} steps`);
-      } catch (e) {
-        console.log(`[FetchSteps] ${userEmail}: Merged query failed:`, e.message);
-      }
-      
-      // Method 2: Try estimated_steps (Google's calculated estimate)
-      try {
-        const estimatedResponse = await axios.post(
-          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-          {
-            aggregateBy: [{
-              dataTypeName: "com.google.step_count.delta",
-              dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
-            }],
-            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
-            startTimeMillis,
-            endTimeMillis
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const estimatedSteps = extractSteps(estimatedResponse);
-        stepCounts.push({ source: 'estimated_steps', steps: estimatedSteps });
-        console.log(`[FetchSteps] ${userEmail}: Estimated steps = ${estimatedSteps} steps`);
-      } catch (e) {
-        console.log(`[FetchSteps] ${userEmail}: Estimated query failed:`, e.message);
-      }
-      
-      // Method 3: Try merge_step_deltas (another merged source)
-      try {
-        const mergeResponse = await axios.post(
-          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-          {
-            aggregateBy: [{
-              dataTypeName: "com.google.step_count.delta",
-              dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:merge_step_deltas"
-            }],
-            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
-            startTimeMillis,
-            endTimeMillis
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const mergeSteps = extractSteps(mergeResponse);
-        stepCounts.push({ source: 'merge_step_deltas', steps: mergeSteps });
-        console.log(`[FetchSteps] ${userEmail}: Merge deltas = ${mergeSteps} steps`);
-      } catch (e) {
-        console.log(`[FetchSteps] ${userEmail}: Merge deltas query failed:`, e.message);
-      }
-      
-    } catch (fetchError) {
-      console.error(`[FetchSteps] ${userEmail}: API Error:`, fetchError.response?.data || fetchError.message);
-      throw fetchError;
+
+  // Helper to extract steps from Google Fit API response
+  const extractStepsFromResponse = (response) => {
+    let steps = 0;
+    if (response.data.bucket && response.data.bucket.length > 0) {
+      response.data.bucket.forEach(bucket => {
+        if (bucket.dataset) {
+          bucket.dataset.forEach(ds => {
+            if (ds.point) {
+              ds.point.forEach(p => {
+                if (p.value && p.value.length > 0) {
+                  steps += p.value[0].intVal || 0;
+                }
+              });
+            }
+          });
+        }
+      });
     }
-    
-    // Return the HIGHEST step count from all sources (most accurate)
-    const maxSteps = stepCounts.length > 0 ? Math.max(...stepCounts.map(s => s.steps)) : 0;
-    const bestSource = stepCounts.find(s => s.steps === maxSteps);
-    
-    console.log(`[FetchSteps] ${userEmail}: All sources: ${JSON.stringify(stepCounts)}`);
-    console.log(`[FetchSteps] ${userEmail}: BEST = ${maxSteps} steps (from ${bestSource?.source || 'none'})`);
-    
-    return maxSteps;
-  }
-  
+    return steps;
+  };
+
+  // Calculate today's time range in IST (midnight IST to now)
+  const getISTDayRange = () => {
+    const now = new Date();
+    // Convert current UTC time to IST
+    const istNow = new Date(now.getTime() + (330 * 60 * 1000));
+    // Get IST midnight for today
+    const istMidnight = new Date(istNow);
+    istMidnight.setHours(0, 0, 0, 0);
+    // Convert IST midnight back to UTC millis
+    const startTimeMillis = istMidnight.getTime() - (330 * 60 * 1000);
+    const endTimeMillis = now.getTime();
+    return { startTimeMillis, endTimeMillis, istDate: istMidnight.toISOString().split('T')[0] };
+  };
+
   try {
     const snapshot = await db.collection('users').get();
-    console.log(`[Sync-All] Processing ${snapshot.docs.length} users...`);
-    
+    const { startTimeMillis, endTimeMillis, istDate } = getISTDayRange();
+
     for (const doc of snapshot.docs) {
       const userData = doc.data();
       const userEmail = userData.email;
       let accessToken = userData.accessToken;
       const refreshToken = userData.refreshToken;
-      
-      // Prioritize refresh token for offline sync
+
       if (!refreshToken) {
-        if (!accessToken) {
-          results.skipped.push({ email: userEmail, reason: 'No tokens stored - user needs to login with Google' });
-        } else {
-          results.skipped.push({ email: userEmail, reason: 'No refresh token - user needs to re-login to enable offline sync' });
-        }
+        results.skipped.push({ email: userEmail, reason: 'No refresh token - user needs to re-login to enable offline sync' });
         continue;
       }
-      
+
       try {
-        // Calculate time range in IST (Indian Standard Time, UTC+5:30)
-        // This ensures we get "today's" steps in the user's local time
-        const now = new Date();
-        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-        
-        // Get current IST time
-        const nowIST = new Date(now.getTime() + IST_OFFSET_MS + (now.getTimezoneOffset() * 60 * 1000));
-        
-        // Calculate start of day in IST (midnight IST)
-        const startOfDayIST = new Date(nowIST);
-        startOfDayIST.setHours(0, 0, 0, 0);
-        
-        // Convert back to UTC milliseconds for the API
-        const startTimeMillis = startOfDayIST.getTime() - IST_OFFSET_MS - (now.getTimezoneOffset() * 60 * 1000);
-        const endTimeMillis = now.getTime();
-        
-        console.log(`[Sync-All] ${userEmail}: IST Date = ${nowIST.toISOString().split('T')[0]}, Start = ${new Date(startTimeMillis).toISOString()}, End = ${new Date(endTimeMillis).toISOString()}`);
-        
-        let totalSteps = 0;
         let tokenRefreshed = false;
         let usedToken = accessToken;
-        
-        // Always try to refresh token first (access tokens expire in 1 hour)
-        console.log(`[Sync-All] Refreshing token for ${userEmail}...`);
+
+        // Always try to refresh token first
         const newAccessToken = await refreshAccessToken(refreshToken);
-        
         if (newAccessToken) {
           usedToken = newAccessToken;
           tokenRefreshed = true;
-          
           await db.collection('users').doc(userEmail).set({
             accessToken: newAccessToken,
             tokenExpiry: Date.now() + (3600 * 1000)
           }, { merge: true });
-          
-          console.log(`[Sync-All] Token refreshed for ${userEmail}`);
-        } else if (accessToken) {
-          console.log(`[Sync-All] Refresh failed for ${userEmail}, trying existing token...`);
-          usedToken = accessToken;
-        } else {
+        } else if (!accessToken) {
           throw new Error('Token refresh failed and no access token available');
         }
-        
-        totalSteps = await fetchStepsWithToken(usedToken, startTimeMillis, endTimeMillis, userEmail);
-        
+
+        // Only use the main Google Fit step data source for the IST day
+        const response = await axios.post(
+          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+          {
+            aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis + 1 },
+            startTimeMillis,
+            endTimeMillis
+          },
+          { headers: { Authorization: `Bearer ${usedToken}` } }
+        );
+        const steps = extractStepsFromResponse(response);
+
         await db.collection('users').doc(userEmail).set({
-          steps: totalSteps,
-          lastSynced: new Date().toISOString()
+          steps,
+          lastSynced: new Date().toISOString(),
+          stepSource: 'com.google.step_count.delta',
+          syncDate: istDate
         }, { merge: true });
-        
-        results.success.push({ email: userEmail, steps: totalSteps, tokenRefreshed });
-        console.log(`[Sync-All] ✅ ${userEmail}: ${totalSteps} steps${tokenRefreshed ? ' (token refreshed)' : ''}`);
-        
+
+        results.success.push({
+          email: userEmail,
+          steps,
+          tokenRefreshed,
+          source: 'com.google.step_count.delta'
+        });
+
       } catch (fetchError) {
-        console.error(`[Sync-All] ❌ Failed for ${userEmail}:`, fetchError.response?.data || fetchError.message);
-        
         let reason = fetchError.message;
         if (fetchError.response?.status === 401) {
           reason = 'Refresh token revoked or expired - user needs to re-login';
+          await db.collection('users').doc(userEmail).set({
+            tokenStatus: 'expired',
+            lastSyncError: reason,
+            lastSyncAttempt: new Date().toISOString()
+          }, { merge: true });
         } else if (fetchError.response?.status === 403) {
           reason = 'Access denied - user may have revoked fitness permissions';
         }
-        
         results.failed.push({ email: userEmail, reason });
       }
     }
-    
-    console.log(`[Sync-All] Complete: ${results.success.length} success, ${results.failed.length} failed, ${results.skipped.length} skipped`);
-    
+
     res.json({
       message: `Synced ${results.success.length} users, ${results.failed.length} failed, ${results.skipped.length} skipped`,
       results,
+      syncDate: istDate,
       timestamp: new Date().toISOString()
     });
-    
+
   } catch (error) {
-    console.error('Sync-all error:', error);
     res.status(500).json({ message: 'Sync-all failed', error: error.message });
   }
 });

@@ -516,6 +516,61 @@ router.get('/firebase/user-steps/:email', async (req, res) => {
   }
 });
 
+// Helper to extract steps from Google Fit API response
+const extractStepsFromResponse = (response) => {
+  let steps = 0;
+  if (response.data.bucket && response.data.bucket.length > 0) {
+    response.data.bucket.forEach(bucket => {
+      if (bucket.dataset) {
+        bucket.dataset.forEach(ds => {
+          if (ds.point) {
+            ds.point.forEach(p => {
+              if (p.value && p.value.length > 0) {
+                steps += p.value[0].intVal || 0;
+              }
+            });
+          }
+        });
+      }
+    });
+  }
+  return steps;
+};
+
+// Calculate today's time range in IST (Indian Standard Time, UTC+5:30)
+const getISTDayRange = () => {
+  const now = new Date();
+  
+  // IST offset: +5:30 = 5.5 hours = 330 minutes
+  const IST_OFFSET_MINUTES = 330;
+  
+  // Get current time in IST
+  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const istMinutes = utcMinutes + IST_OFFSET_MINUTES;
+  
+  // Create IST date components
+  let istDate = new Date(now);
+  istDate.setUTCHours(0, 0, 0, 0);
+  
+  // If IST time rolled over to next day, adjust
+  if (istMinutes >= 24 * 60) {
+    istDate.setUTCDate(istDate.getUTCDate() + 1);
+  } else if (istMinutes < 0) {
+    istDate.setUTCDate(istDate.getUTCDate() - 1);
+  }
+  
+  // Start of IST day in UTC: Midnight IST = 18:30 UTC previous day
+  const startOfDayIST = new Date(istDate);
+  startOfDayIST.setUTCHours(0, 0, 0, 0);
+  // Subtract IST offset to get UTC time of IST midnight
+  const startTimeMillis = startOfDayIST.getTime() - (IST_OFFSET_MINUTES * 60 * 1000);
+  
+  // End time is current time
+  const endTimeMillis = now.getTime();
+  
+  return { startTimeMillis, endTimeMillis, istDate: istDate.toISOString().split('T')[0] };
+};
+
 // Sync ALL users' steps using their stored REFRESH TOKENS (background sync - no user login needed)
 // This is the CORRECT way to fetch steps for offline users
 router.post('/firebase/sync-all-steps', async (req, res) => {
@@ -527,117 +582,132 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
   
   const results = { success: [], failed: [], skipped: [] };
   
-  // Helper function to fetch steps with a given token
-  // Tries MULTIPLE data sources and returns the HIGHEST value for accuracy
+  // Fetch steps using multiple methods and return the best result
   async function fetchStepsWithToken(token, startTimeMillis, endTimeMillis, userEmail) {
     const stepCounts = [];
+    const ONE_HOUR_MS = 3600000;
     
-    console.log(`[FetchSteps] ${userEmail}: Fetching from ${new Date(startTimeMillis).toISOString()} to ${new Date(endTimeMillis).toISOString()}`);
+    console.log(`[FetchSteps] ${userEmail}: Range ${new Date(startTimeMillis).toISOString()} to ${new Date(endTimeMillis).toISOString()}`);
     
-    // Helper to extract steps from response
-    const extractSteps = (response) => {
-      let steps = 0;
-      if (response.data.bucket && response.data.bucket.length > 0) {
-        response.data.bucket.forEach(bucket => {
-          if (bucket.dataset) {
-            bucket.dataset.forEach(ds => {
-              if (ds.point) {
-                ds.point.forEach(p => {
-                  if (p.value && p.value.length > 0) {
-                    steps += p.value[0].intVal || 0;
-                  }
-                });
-              }
-            });
-          }
-        });
-      }
+    // Helper to log and add
+    const addResult = (source, steps) => {
+      stepCounts.push({ source, steps });
+      console.log(`[FetchSteps] ${userEmail}: ${source} = ${steps} steps`);
       return steps;
     };
-    
+
+    let finalSteps = 0;
+    let finalSource = 'none';
+
+    // STRATEGY: Waterfall Priority
+    // 1. merge_step_deltas (Most Accurate - Matches Google Fit App)
+    // 2. hourly_buckets (Generic Aggregation - Good fallback)
+    // 3. estimated_steps (Raw Sensor - Only if others fail)
+
+    // Priority 1: merge_step_deltas
     try {
-      // Method 1: Query WITHOUT dataSourceId (gets merged data from ALL sources - most accurate)
-      try {
-        const mergedResponse = await axios.post(
-          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-          {
-            aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
-            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
-            startTimeMillis,
-            endTimeMillis
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const mergedSteps = extractSteps(mergedResponse);
-        stepCounts.push({ source: 'merged', steps: mergedSteps });
-        console.log(`[FetchSteps] ${userEmail}: Merged sources = ${mergedSteps} steps`);
-      } catch (e) {
-        console.log(`[FetchSteps] ${userEmail}: Merged query failed:`, e.message);
-      }
+      const mergeResponse = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{
+            dataTypeName: "com.google.step_count.delta",
+            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:merge_step_deltas"
+          }],
+          bucketByTime: { durationMillis: ONE_HOUR_MS },
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const steps = extractStepsFromResponse(mergeResponse);
+      addResult('merge_step_deltas', steps);
       
-      // Method 2: Try estimated_steps (Google's calculated estimate)
-      try {
-        const estimatedResponse = await axios.post(
-          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-          {
-            aggregateBy: [{
-              dataTypeName: "com.google.step_count.delta",
-              dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
-            }],
-            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
-            startTimeMillis,
-            endTimeMillis
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const estimatedSteps = extractSteps(estimatedResponse);
-        stepCounts.push({ source: 'estimated_steps', steps: estimatedSteps });
-        console.log(`[FetchSteps] ${userEmail}: Estimated steps = ${estimatedSteps} steps`);
-      } catch (e) {
-        console.log(`[FetchSteps] ${userEmail}: Estimated query failed:`, e.message);
+      if (steps > 0) {
+        return { steps, source: 'merge_step_deltas', allResults: stepCounts };
       }
-      
-      // Method 3: Try merge_step_deltas (another merged source)
-      try {
-        const mergeResponse = await axios.post(
-          'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
-          {
-            aggregateBy: [{
-              dataTypeName: "com.google.step_count.delta",
-              dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:merge_step_deltas"
-            }],
-            bucketByTime: { durationMillis: endTimeMillis - startTimeMillis },
-            startTimeMillis,
-            endTimeMillis
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const mergeSteps = extractSteps(mergeResponse);
-        stepCounts.push({ source: 'merge_step_deltas', steps: mergeSteps });
-        console.log(`[FetchSteps] ${userEmail}: Merge deltas = ${mergeSteps} steps`);
-      } catch (e) {
-        console.log(`[FetchSteps] ${userEmail}: Merge deltas query failed:`, e.message);
+    } catch (e) {
+      console.log(`[FetchSteps] ${userEmail}: Merge deltas failed:`, e.response?.data?.error?.message || e.message);
+    }
+
+    // Priority 2: Generic Hourly Aggregation (Smart merged)
+    try {
+      const hourlyResponse = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+          bucketByTime: { durationMillis: ONE_HOUR_MS },
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const steps = extractStepsFromResponse(hourlyResponse);
+      addResult('hourly_buckets', steps);
+
+      if (steps > 0) {
+         // If we didn't get data from merge_step_deltas but got it here, use this
+         return { steps, source: 'hourly_buckets', allResults: stepCounts };
       }
+    } catch (e) {
+      console.log(`[FetchSteps] ${userEmail}: Hourly query failed:`, e.response?.data?.error?.message || e.message);
+    }
+
+    // Priority 3: Estimated Steps (Fallback for phones without robust merging)
+    try {
+      const estimatedResponse = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{
+            dataTypeName: "com.google.step_count.delta",
+            dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+          }],
+          bucketByTime: { durationMillis: ONE_HOUR_MS },
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const steps = extractStepsFromResponse(estimatedResponse);
+      addResult('estimated_steps', steps);
       
-    } catch (fetchError) {
-      console.error(`[FetchSteps] ${userEmail}: API Error:`, fetchError.response?.data || fetchError.message);
-      throw fetchError;
+      if (steps > 0) {
+        return { steps, source: 'estimated_steps', allResults: stepCounts };
+      }
+    } catch (e) {
+      console.log(`[FetchSteps] ${userEmail}: Estimated query failed:`, e.response?.data?.error?.message || e.message);
     }
     
-    // Return the HIGHEST step count from all sources (most accurate)
-    const maxSteps = stepCounts.length > 0 ? Math.max(...stepCounts.map(s => s.steps)) : 0;
-    const bestSource = stepCounts.find(s => s.steps === maxSteps);
-    
-    console.log(`[FetchSteps] ${userEmail}: All sources: ${JSON.stringify(stepCounts)}`);
-    console.log(`[FetchSteps] ${userEmail}: BEST = ${maxSteps} steps (from ${bestSource?.source || 'none'})`);
-    
-    return maxSteps;
+    // If all failed or returned 0, try the single bucket merge as last ditch
+    try {
+       const mergedResponse = await axios.post(
+        'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
+        {
+          aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }],
+          bucketByTime: { durationMillis: endTimeMillis - startTimeMillis + 1 },
+          startTimeMillis,
+          endTimeMillis
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const steps = extractStepsFromResponse(mergedResponse);
+      addResult('merged_single', steps);
+      
+      return { steps, source: 'merged_single', allResults: stepCounts };
+    } catch (e) {
+       console.log(`[FetchSteps] ${userEmail}: Merged single failed`);
+    }
+
+    return { steps: 0, source: 'none', allResults: stepCounts };
   }
   
   try {
     // Get all users from Firebase
     const snapshot = await db.collection('users').get();
     console.log(`[Sync-All] Processing ${snapshot.docs.length} users...`);
+    
+    // Calculate time range once for all users (IST based)
+    const { startTimeMillis, endTimeMillis, istDate } = getISTDayRange();
+    console.log(`[Sync-All] IST Date: ${istDate}, UTC Range: ${new Date(startTimeMillis).toISOString()} to ${new Date(endTimeMillis).toISOString()}`);
     
     for (const doc of snapshot.docs) {
       const userData = doc.data();
@@ -656,30 +726,10 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
       }
       
       try {
-        // Calculate time range in IST (Indian Standard Time, UTC+5:30)
-        // This ensures we get "today's" steps in the user's local timezone
-        const now = new Date();
-        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-        
-        // Get current time as IST
-        const nowIST = new Date(now.getTime() + IST_OFFSET_MS + (now.getTimezoneOffset() * 60 * 1000));
-        
-        // Calculate start of day in IST (midnight IST)
-        const startOfDayIST = new Date(nowIST);
-        startOfDayIST.setHours(0, 0, 0, 0);
-        
-        // Convert back to UTC milliseconds for Google Fit API
-        const startTimeMillis = startOfDayIST.getTime() - IST_OFFSET_MS - (now.getTimezoneOffset() * 60 * 1000);
-        const endTimeMillis = now.getTime();
-        
-        console.log(`[Sync-All] ${userEmail}: IST Date = ${nowIST.toISOString().split('T')[0]}, Start = ${new Date(startTimeMillis).toISOString()}, End = ${new Date(endTimeMillis).toISOString()}`);
-        
-        let totalSteps = 0;
         let tokenRefreshed = false;
         let usedToken = accessToken;
         
         // ALWAYS try to refresh token first for reliability (access tokens expire in 1 hour)
-        // This ensures we can sync even if user hasn't opened the app for days
         console.log(`[Sync-All] Refreshing token for ${userEmail}...`);
         const newAccessToken = await refreshAccessToken(refreshToken);
         
@@ -703,20 +753,23 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
         }
         
         // Fetch steps using the token
-        totalSteps = await fetchStepsWithToken(usedToken, startTimeMillis, endTimeMillis, userEmail);
+        const result = await fetchStepsWithToken(usedToken, startTimeMillis, endTimeMillis, userEmail);
         
         // Update user's steps in Firebase
         await db.collection('users').doc(userEmail).set({
-          steps: totalSteps,
-          lastSynced: new Date().toISOString()
+          steps: result.steps,
+          lastSynced: new Date().toISOString(),
+          stepSource: result.source,
+          syncDate: istDate
         }, { merge: true });
         
         results.success.push({ 
           email: userEmail, 
-          steps: totalSteps,
-          tokenRefreshed 
+          steps: result.steps,
+          tokenRefreshed,
+          source: result.source
         });
-        console.log(`[Sync-All] ✅ ${userEmail}: ${totalSteps} steps${tokenRefreshed ? ' (token refreshed)' : ''}`);
+        console.log(`[Sync-All] ✅ ${userEmail}: ${result.steps} steps from ${result.source}${tokenRefreshed ? ' (token refreshed)' : ''}`);
         
       } catch (fetchError) {
         console.error(`[Sync-All] ❌ Failed for ${userEmail}:`, fetchError.response?.data || fetchError.message);
@@ -746,6 +799,7 @@ router.post('/firebase/sync-all-steps', async (req, res) => {
     res.json({
       message: `Synced ${results.success.length} users, ${results.failed.length} failed, ${results.skipped.length} skipped`,
       results,
+      syncDate: istDate,
       timestamp: new Date().toISOString()
     });
     
